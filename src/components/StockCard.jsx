@@ -28,7 +28,7 @@ export default function StockCard({ stock, side }) {
   const theme = useTheme();
   const buy = side === "buy";
   const signals = stock.signals.filter((g) => g.side === side).slice(0, 3);
-  const bucket = rateBucket(stock.predictionRate);
+  const bucket = rateBucket(stock);
   const barColor =
     bucket.cls === "high" ? "success" : bucket.cls === "low" ? "error" : "primary";
   const bucketColor =
@@ -103,7 +103,14 @@ export default function StockCard({ stock, side }) {
               color={deltaColor(theme, stock.chg20d)}
             />
             <Stat label="RSI" value={stock.rsi ?? "–"} />
-            <Stat label="Score" value={buy ? stock.buyScore : stock.sellScore} />
+            <Stat label="Strength" value={(buy ? stock.buyScore : stock.sellScore) + "/100"} />
+            {stock.expectancy != null && (
+              <Stat
+                label="Edge"
+                value={`${stock.expectancy > 0 ? "+" : ""}${stock.expectancy}%/wk`}
+                color={deltaColor(theme, stock.expectancy)}
+              />
+            )}
           </Stack>
         </Box>
 

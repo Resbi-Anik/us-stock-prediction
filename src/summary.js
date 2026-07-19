@@ -1,48 +1,43 @@
 /** Build the "week at a glance" summary from whichever stocks are visible. */
 export function buildSummary(stocks) {
-  const buys = stocks.filter((s) => s.verdict === "BUY");
-  const sells = stocks.filter((s) => s.verdict === "SELL");
-  const holds = stocks.filter((s) => s.verdict === "HOLD");
+  const byRank = (a, b) => (b.rank ?? 0) - (a.rank ?? 0);
+  const buys = stocks.filter((s) => s.verdict === "BUY").sort(byRank);
+  const sells = stocks.filter((s) => s.verdict === "SELL").sort(byRank);
+  const picks = [...buys, ...sells];
 
-  const rated = stocks.filter((s) => s.predictionRate != null);
-  const avgPredictionRate = rated.length
-    ? Math.round(rated.reduce((a, s) => a + s.predictionRate, 0) / rated.length)
+  // Averages describe the actionable picks — all of which passed the
+  // server's reliability gate (hit rate ≥ 52% and positive edge).
+  const avgPredictionRate = picks.length
+    ? Math.round(picks.reduce((a, s) => a + (s.predictionRate ?? 0), 0) / picks.length)
+    : null;
+  const avgEdge = picks.length
+    ? +(picks.reduce((a, s) => a + (s.expectancy ?? 0), 0) / picks.length).toFixed(2)
     : null;
 
   const avgWeekMove = stocks.length
     ? +(stocks.reduce((a, s) => a + (s.chg5d || 0), 0) / stocks.length).toFixed(1)
     : 0;
 
+  // Breadth reads the whole tape (composite lean of every stock),
+  // not just the few picks that passed the gate.
+  const bulls = stocks.filter((s) => s.buyScore >= 15).length;
+  const bears = stocks.filter((s) => s.sellScore >= 15).length;
   const breadth =
-    buys.length > sells.length * 1.5
-      ? "bullish"
-      : sells.length > buys.length * 1.5
-      ? "bearish"
-      : "mixed";
-
-  const topBuy = [...buys].sort(
-    (a, b) =>
-      b.buyScore - a.buyScore ||
-      (b.predictionRate || 0) - (a.predictionRate || 0)
-  )[0];
-  const topSell = [...sells].sort(
-    (a, b) =>
-      b.sellScore - a.sellScore ||
-      (b.predictionRate || 0) - (a.predictionRate || 0)
-  )[0];
+    bulls > bears * 1.5 ? "bullish" : bears > bulls * 1.5 ? "bearish" : "mixed";
 
   return {
     buys: buys.length,
     sells: sells.length,
-    holds: holds.length,
+    holds: stocks.length - picks.length,
     breadth,
     avgWeekMove,
     avgPredictionRate,
-    topBuy: topBuy
-      ? { symbol: topBuy.symbol, predictionRate: topBuy.predictionRate }
+    avgEdge,
+    topBuy: buys[0]
+      ? { symbol: buys[0].symbol, predictionRate: buys[0].predictionRate }
       : null,
-    topSell: topSell
-      ? { symbol: topSell.symbol, predictionRate: topSell.predictionRate }
+    topSell: sells[0]
+      ? { symbol: sells[0].symbol, predictionRate: sells[0].predictionRate }
       : null,
   };
 }

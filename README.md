@@ -50,31 +50,43 @@ Then open **http://localhost:3000**.
 - **Full table** of all 48 stocks with weekly/monthly change, RSI, prediction
   rate, and BUY/HOLD/SELL signal.
 
-## How the ranking works
+## How the decision engine works
 
-For each stock the server pulls 2 years of daily bars and computes:
+For each stock the server pulls **~5 years of daily bars** and evaluates an
+**ensemble of 12 sub-signals**, each voting up / down / no-opinion for the
+coming week:
 
-| Signal | Buy points | Sell points |
-|---|---|---|
-| Trend (price vs 20d / 50d moving averages) | up to 30 | up to 30 |
-| Momentum (1-week and 1-month % change) | up to 30 | up to 30 |
-| RSI-14 (rewards 50–65, flags >72 overbought) | up to 20 | up to 20 |
-| Volume confirmation (5d vs 20d average) | 10 | 10 |
-| 20-day breakout / breakdown proximity | 10 | 10 |
+trend structure (20d/50d averages) · 1-month momentum · 1-week momentum ·
+RSI strength zone · RSI extremes · RSI-2 dip/spike reversion · MACD ·
+Bollinger-band reversion · relative strength vs S&P 500 · overall market
+regime (SPY vs its 200-day average) · volume confirmation · 20-day
+breakout/breakdown.
 
-A stock is **BUY** when its buy score is ≥ 55 and clearly beats its sell score,
-**SELL** when the reverse holds, otherwise **HOLD**.
+**Walk-forward learning (no lookahead):** history is replayed day by day.
+Each sub-signal's hit rate *on that particular stock* is tracked as the replay
+progresses, and votes are combined weighted by each signal's proven edge so
+far — so by today, the model has learned which signals actually work for each
+symbol. The composite verdict is sampled weekly along the way, giving each
+stock an honest backtest of the exact rule the app uses live.
 
-**Prediction rate (backtest):** the same scoring is replayed through the past
-2 years in 5-trading-day steps. Each historical BUY/SELL call is checked
-against the *following* week's actual move; the prediction rate is the share of
-calls that were right. Fewer than 5 historical signals → "n/a".
+**Reported per stock:** prediction rate (backtest hit rate) with a **95%
+Wilson confidence interval**, sample count, and **expectancy** (average %
+return per signaled week — a hit rate means little if wins are small and
+losses big).
+
+**Decision gate:** a live BUY/SELL is only surfaced when that stock's own
+backtest shows hit rate ≥ 52% *and* positive expectancy. Everything else is
+HOLD — fewer picks, but each one validated. Picks are ranked by validated
+edge (rate + expectancy, tempered by sample size) rather than raw signal
+strength, and each card lists the strongest contributing signals with their
+per-stock track record (e.g. "Relative strength vs S&P 500 — right 58% of
+892 past calls on this stock").
 
 ## Architecture
 
 - `server.js` — zero-dependency Node server: fetches Yahoo Finance data (no API
-  key), computes indicators + backtests, serves `/api/screen` and the built
-  React app from `dist/`. Results cached 15 min.
+  key), runs the walk-forward ensemble + backtests, serves `/api/screen` and
+  the built React app from `dist/`. Results cached 5 min.
 - `src/` — React app (Vite + Material UI): `App.jsx`, `components/`
   (SummaryCard, StockCard, Sparkline, StockTable), `theme.js` (MUI light/dark
   themes — the header moon/sun button toggles them, defaulting to the system

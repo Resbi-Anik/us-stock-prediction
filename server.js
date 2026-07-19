@@ -2,11 +2,19 @@
  * US Stock Weekly Picks — zero-dependency Node server.
  *
  * Serves the React app from ./dist and exposes:
- *   GET /api/screen  -> scans the watchlist, returns scored buy/sell candidates
- *                       with a backtested per-stock prediction rate
+ *   GET /api/screen  -> scans the watchlist, returns buy/sell candidates
+ *                       ranked by validated decision quality
+ *
+ * Decision engine: an ensemble of 12 technical sub-signals is evaluated
+ * walk-forward over ~5 years of history. For every stock, each sub-signal's
+ * hit rate ON THAT STOCK is tracked as history replays, and votes are
+ * weighted by that learned edge — so by "today", the model has learned
+ * which signals actually work for each symbol, with no lookahead bias.
+ * The composite verdict is backtested the same way and reported with a
+ * 95% confidence interval and average edge per trade.
  *
  * Data source: Yahoo Finance public chart API (no key required).
- * Results are cached in memory for 15 minutes.
+ * Results are cached in memory for 5 minutes.
  */
 
 const http = require("http");
@@ -16,6 +24,18 @@ const path = require("path");
 
 const PORT = process.env.PORT || 3000;
 const CACHE_TTL_MS = 5 * 60 * 1000;
+
+// Decision-engine tuning
+const HORIZON = 5; // trading days ahead a call is judged against (1 week)
+const WARMUP = 60; // bars before the first evaluation
+const SAMPLE_STEP = 5; // backtest verdicts on non-overlapping weekly steps
+const SCORE_THRESHOLD = 0.28; // |composite| needed for a BUY/SELL verdict
+const MIN_ACTIVE_VOTERS = 4; // how many sub-signals must be firing
+const MIN_WEIGHT_MASS = 0.12; // total learned edge required (filters "all-unproven" setups)
+// Decision gate: a live BUY/SELL is only surfaced when the stock's own
+// backtest shows the composite actually worked on it — otherwise HOLD.
+const DECISION_MIN_RATE = 52; // historical hit rate (%)
+const DECISION_MIN_EDGE = 0; // average % return per trade must be positive
 
 // Liquid large/mega-cap US stocks across sectors.
 const WATCHLIST = [
@@ -90,20 +110,21 @@ function fetchJson(url) {
 async function fetchHistory(symbol) {
   const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(
     symbol
-  )}?range=2y&interval=1d`;
+  )}?range=5y&interval=1d`;
   const json = await fetchJson(url);
   const result = json?.chart?.result?.[0];
   if (!result) throw new Error(`no data for ${symbol}`);
   const quote = result.indicators.quote[0];
-  const bars = [];
+  const closes = [];
+  const volumes = [];
+  const dates = [];
   for (let i = 0; i < result.timestamp.length; i++) {
     if (quote.close[i] == null) continue;
-    bars.push({
-      close: quote.close[i],
-      volume: quote.volume[i] || 0,
-    });
+    closes.push(quote.close[i]);
+    volumes.push(quote.volume[i] || 0);
+    dates.push(new Date(result.timestamp[i] * 1000).toISOString().slice(0, 10));
   }
-  return { symbol, name: result.meta.longName || symbol, bars };
+  return { symbol, name: result.meta.longName || symbol, closes, volumes, dates };
 }
 
 async function mapWithConcurrency(items, limit, fn) {
@@ -125,269 +146,502 @@ async function mapWithConcurrency(items, limit, fn) {
   return results;
 }
 
-// ---------- Indicators (all index-based so they work at any point in history) ----------
+// ---------- Indicator series (computed once per stock, O(n)) ----------
 
-function sma(values, period, endIdx) {
-  if (endIdx + 1 < period) return null;
-  let sum = 0;
-  for (let i = endIdx - period + 1; i <= endIdx; i++) sum += values[i];
-  return sum / period;
+function smaSeries(v, p) {
+  const out = new Array(v.length).fill(null);
+  let s = 0;
+  for (let i = 0; i < v.length; i++) {
+    s += v[i];
+    if (i >= p) s -= v[i - p];
+    if (i >= p - 1) out[i] = s / p;
+  }
+  return out;
 }
 
-function rsiAt(closes, endIdx, period = 14) {
-  const start = Math.max(1, endIdx - 90);
-  if (endIdx - start < period) return null;
-  let gain = 0;
-  let loss = 0;
-  for (let i = start; i < start + period; i++) {
-    const d = closes[i] - closes[i - 1];
-    if (d >= 0) gain += d;
-    else loss -= d;
+function stdSeries(v, p) {
+  const out = new Array(v.length).fill(null);
+  let s = 0;
+  let sq = 0;
+  for (let i = 0; i < v.length; i++) {
+    s += v[i];
+    sq += v[i] * v[i];
+    if (i >= p) {
+      s -= v[i - p];
+      sq -= v[i - p] * v[i - p];
+    }
+    if (i >= p - 1) {
+      const mean = s / p;
+      out[i] = Math.sqrt(Math.max(0, sq / p - mean * mean));
+    }
   }
-  let avgGain = gain / period;
-  let avgLoss = loss / period;
-  for (let i = start + period; i <= endIdx; i++) {
-    const d = closes[i] - closes[i - 1];
-    avgGain = (avgGain * (period - 1) + Math.max(d, 0)) / period;
-    avgLoss = (avgLoss * (period - 1) + Math.max(-d, 0)) / period;
-  }
-  if (avgLoss === 0) return 100;
-  return 100 - 100 / (1 + avgGain / avgLoss);
+  return out;
 }
 
-function pctChangeAt(closes, days, endIdx) {
-  const prev = endIdx - days;
-  if (prev < 0) return null;
-  return ((closes[endIdx] - closes[prev]) / closes[prev]) * 100;
+function emaSeries(v, p) {
+  const out = new Array(v.length).fill(null);
+  const k = 2 / (p + 1);
+  let e = null;
+  let seed = 0;
+  for (let i = 0; i < v.length; i++) {
+    if (e == null) {
+      seed += v[i];
+      if (i === p - 1) {
+        e = seed / p;
+        out[i] = e;
+      }
+    } else {
+      e = v[i] * k + e * (1 - k);
+      out[i] = e;
+    }
+  }
+  return out;
 }
 
-// ---------- Scoring (usable at any historical index for backtesting) ----------
-
-function computeSignals(closes, volumes, endIdx, withText) {
-  if (endIdx + 1 < 60) return null;
-
-  const price = closes[endIdx];
-  const sma20 = sma(closes, 20, endIdx);
-  const sma50 = sma(closes, 50, endIdx);
-  const rsi14 = rsiAt(closes, endIdx);
-  const chg5d = pctChangeAt(closes, 5, endIdx);
-  const chg20d = pctChangeAt(closes, 20, endIdx);
-
-  const avgVol20 = sma(volumes, 20, endIdx);
-  const avgVol5 = sma(volumes, 5, endIdx);
-  const volRatio = avgVol20 ? avgVol5 / avgVol20 : 1;
-
-  const win = closes.slice(endIdx - 19, endIdx + 1);
-  const hi20 = Math.max(...win);
-  const lo20 = Math.min(...win);
-  const offHigh = ((price - hi20) / hi20) * 100;
-  const offLow = ((price - lo20) / lo20) * 100;
-
-  const signals = [];
-  const say = (side, text) => withText && signals.push({ side, text });
-  let buyScore = 0;
-  let sellScore = 0;
-
-  // Trend structure
-  if (price > sma20 && sma20 > sma50) {
-    buyScore += 30;
-    say("buy", "Uptrend: price above 20d & 50d average");
-  } else if (price < sma20 && sma20 < sma50) {
-    sellScore += 30;
-    say("sell", "Downtrend: price below 20d & 50d average");
-  } else if (price > sma50 && price < sma20) {
-    buyScore += 8;
-    say("buy", "Pullback within longer-term uptrend");
+function rsiSeries(v, p) {
+  const out = new Array(v.length).fill(null);
+  if (v.length <= p) return out;
+  let g = 0;
+  let l = 0;
+  for (let i = 1; i <= p; i++) {
+    const d = v[i] - v[i - 1];
+    if (d >= 0) g += d;
+    else l -= d;
   }
+  let ag = g / p;
+  let al = l / p;
+  out[p] = al === 0 ? 100 : 100 - 100 / (1 + ag / al);
+  for (let i = p + 1; i < v.length; i++) {
+    const d = v[i] - v[i - 1];
+    ag = (ag * (p - 1) + Math.max(d, 0)) / p;
+    al = (al * (p - 1) + Math.max(-d, 0)) / p;
+    out[i] = al === 0 ? 100 : 100 - 100 / (1 + ag / al);
+  }
+  return out;
+}
 
-  // Momentum
-  if (chg20d != null) {
-    if (chg20d > 5) {
-      buyScore += 20;
-      say("buy", `Strong 1-month momentum (+${chg20d.toFixed(1)}%)`);
-    } else if (chg20d > 2) {
-      buyScore += 10;
-    } else if (chg20d < -5) {
-      sellScore += 20;
-      say("sell", `Weak 1-month momentum (${chg20d.toFixed(1)}%)`);
-    } else if (chg20d < -2) {
-      sellScore += 10;
+function pctSeries(v, d) {
+  const out = new Array(v.length).fill(null);
+  for (let i = d; i < v.length; i++) {
+    out[i] = ((v[i] - v[i - d]) / v[i - d]) * 100;
+  }
+  return out;
+}
+
+function macdHistSeries(closes) {
+  const e12 = emaSeries(closes, 12);
+  const e26 = emaSeries(closes, 26);
+  const out = new Array(closes.length).fill(null);
+  const k = 2 / 10; // signal EMA(9)
+  let sig = null;
+  let cnt = 0;
+  let seed = 0;
+  for (let i = 0; i < closes.length; i++) {
+    if (e12[i] == null || e26[i] == null) continue;
+    const m = e12[i] - e26[i];
+    if (sig == null) {
+      seed += m;
+      cnt++;
+      if (cnt === 9) {
+        sig = seed / 9;
+        out[i] = m - sig;
+      }
+    } else {
+      sig = m * k + sig * (1 - k);
+      out[i] = m - sig;
     }
   }
-  if (chg5d != null) {
-    if (chg5d > 2) buyScore += 10;
-    else if (chg5d < -2) sellScore += 10;
-  }
+  return out;
+}
 
-  // RSI — reward healthy strength, flag extremes
-  if (rsi14 != null) {
-    if (rsi14 >= 50 && rsi14 <= 65) {
-      buyScore += 20;
-      say("buy", `Healthy RSI ${rsi14.toFixed(0)} — strong but not overbought`);
-    } else if (rsi14 > 65 && rsi14 <= 72) {
-      buyScore += 8;
-    } else if (rsi14 > 72) {
-      sellScore += 20;
-      say("sell", `Overbought RSI ${rsi14.toFixed(0)} — pullback risk`);
-    } else if (rsi14 < 30) {
-      buyScore += 10;
-      say("buy", `Oversold RSI ${rsi14.toFixed(0)} — possible bounce (risky)`);
-      sellScore += 8;
-    } else if (rsi14 >= 30 && rsi14 < 45) {
-      sellScore += 10;
-    }
+function rollingMax(v, p) {
+  // O(n) sliding-window max via monotonic deque
+  const out = new Array(v.length).fill(null);
+  const dq = [];
+  for (let i = 0; i < v.length; i++) {
+    while (dq.length && v[dq[dq.length - 1]] <= v[i]) dq.pop();
+    dq.push(i);
+    if (dq[0] <= i - p) dq.shift();
+    if (i >= p - 1) out[i] = v[dq[0]];
   }
+  return out;
+}
 
-  // Volume confirmation
-  if (volRatio > 1.3) {
-    if (chg5d != null && chg5d > 0) {
-      buyScore += 10;
-      say("buy", "Rising volume confirms buying interest");
-    } else if (chg5d != null && chg5d < 0) {
-      sellScore += 10;
-      say("sell", "Heavy volume on decline — distribution");
-    }
+function rollingMin(v, p) {
+  const out = new Array(v.length).fill(null);
+  const dq = [];
+  for (let i = 0; i < v.length; i++) {
+    while (dq.length && v[dq[dq.length - 1]] >= v[i]) dq.pop();
+    dq.push(i);
+    if (dq[0] <= i - p) dq.shift();
+    if (i >= p - 1) out[i] = v[dq[0]];
   }
+  return out;
+}
 
-  // Breakout / breakdown proximity
-  if (offHigh > -1) {
-    buyScore += 10;
-    say("buy", "Trading at 20-day highs (breakout zone)");
-  }
-  if (offLow < 1 && offLow >= 0) {
-    sellScore += 10;
-    say("sell", "Sitting at 20-day lows (breakdown zone)");
-  }
+// ---------- Market context (SPY) ----------
 
-  const verdict =
-    buyScore >= 55 && buyScore > sellScore + 15
-      ? "BUY"
-      : sellScore >= 45 && sellScore > buyScore + 10
-      ? "SELL"
-      : "HOLD";
+function prepMarket(spy) {
+  return {
+    dates: spy.dates,
+    closes: spy.closes,
+    idxByDate: new Map(spy.dates.map((d, i) => [d, i])),
+    sma200: smaSeries(spy.closes, 200),
+    chg20: pctSeries(spy.closes, 20),
+  };
+}
+
+// ---------- Ensemble of sub-signals ----------
+
+/**
+ * Each voter looks at one aspect of the tape and votes +1 (up next week),
+ * -1 (down next week), or 0 (no opinion) at a given bar index.
+ */
+function buildVoters(stock, market) {
+  const c = stock.closes;
+  const sma20 = smaSeries(c, 20);
+  const sma50 = smaSeries(c, 50);
+  const rsi14 = rsiSeries(c, 14);
+  const rsi2 = rsiSeries(c, 2);
+  const macd = macdHistSeries(c);
+  const std20 = stdSeries(c, 20);
+  const chg5 = pctSeries(c, 5);
+  const chg20 = pctSeries(c, 20);
+  const hi20 = rollingMax(c, 20);
+  const lo20 = rollingMin(c, 20);
+  const vol5 = smaSeries(stock.volumes, 5);
+  const vol20 = smaSeries(stock.volumes, 20);
+
+  const spyAt = (i) => {
+    if (!market) return null;
+    const k = market.idxByDate.get(stock.dates[i]);
+    return k == null ? null : k;
+  };
+
+  const voters = [
+    {
+      key: "trend",
+      label: "Trend structure (price vs 20d/50d averages)",
+      dir(i) {
+        if (sma20[i] == null || sma50[i] == null) return 0;
+        if (c[i] > sma20[i] && sma20[i] > sma50[i]) return 1;
+        if (c[i] < sma20[i] && sma20[i] < sma50[i]) return -1;
+        return 0;
+      },
+    },
+    {
+      key: "mom20",
+      label: "1-month momentum",
+      dir(i) {
+        if (chg20[i] == null) return 0;
+        return chg20[i] > 4 ? 1 : chg20[i] < -4 ? -1 : 0;
+      },
+    },
+    {
+      key: "mom5",
+      label: "1-week momentum",
+      dir(i) {
+        if (chg5[i] == null) return 0;
+        return chg5[i] > 2.5 ? 1 : chg5[i] < -2.5 ? -1 : 0;
+      },
+    },
+    {
+      key: "rsiZone",
+      label: "RSI strength zone",
+      dir(i) {
+        const r = rsi14[i];
+        if (r == null) return 0;
+        if (r >= 50 && r <= 68) return 1;
+        if (r >= 32 && r <= 45) return -1;
+        return 0;
+      },
+    },
+    {
+      key: "rsiExtreme",
+      label: "RSI extreme (overbought/oversold)",
+      dir(i) {
+        const r = rsi14[i];
+        if (r == null) return 0;
+        return r > 72 ? -1 : r < 28 ? 1 : 0;
+      },
+    },
+    {
+      key: "rsi2",
+      label: "Short-term dip/spike reversion (RSI-2)",
+      dir(i) {
+        const r = rsi2[i];
+        if (r == null) return 0;
+        return r < 10 ? 1 : r > 90 ? -1 : 0;
+      },
+    },
+    {
+      key: "macd",
+      label: "MACD trend confirmation",
+      dir(i) {
+        const h = macd[i];
+        if (h == null) return 0;
+        return h > 0 ? 1 : h < 0 ? -1 : 0;
+      },
+    },
+    {
+      key: "boll",
+      label: "Bollinger-band reversion",
+      dir(i) {
+        if (sma20[i] == null || std20[i] == null || std20[i] === 0) return 0;
+        const pb = (c[i] - (sma20[i] - 2 * std20[i])) / (4 * std20[i]);
+        return pb < 0.05 ? 1 : pb > 0.95 ? -1 : 0;
+      },
+    },
+    {
+      key: "relStrength",
+      label: "Relative strength vs S&P 500",
+      dir(i) {
+        const k = spyAt(i);
+        if (k == null || chg20[i] == null || market.chg20[k] == null) return 0;
+        const rel = chg20[i] - market.chg20[k];
+        return rel > 3 ? 1 : rel < -3 ? -1 : 0;
+      },
+    },
+    {
+      key: "regime",
+      label: "Overall market regime (S&P 500 vs 200d average)",
+      dir(i) {
+        const k = spyAt(i);
+        if (k == null || market.sma200[k] == null) return 0;
+        return market.closes[k] > market.sma200[k] ? 1 : -1;
+      },
+    },
+    {
+      key: "volume",
+      label: "Volume confirmation",
+      dir(i) {
+        if (vol5[i] == null || vol20[i] == null || vol20[i] === 0) return 0;
+        if (vol5[i] / vol20[i] <= 1.3 || chg5[i] == null) return 0;
+        return chg5[i] > 0 ? 1 : chg5[i] < 0 ? -1 : 0;
+      },
+    },
+    {
+      key: "breakout",
+      label: "20-day breakout / breakdown",
+      dir(i) {
+        if (hi20[i] == null) return 0;
+        if (c[i] >= hi20[i] * 0.999) return 1;
+        if (c[i] <= lo20[i] * 1.001) return -1;
+        return 0;
+      },
+    },
+  ];
 
   return {
-    price, sma20, sma50, rsi14, chg5d, chg20d, volRatio,
-    buyScore, sellScore, verdict, signals,
+    voters,
+    series: { sma20, sma50, rsi14, chg5, chg20, vol5, vol20 },
   };
 }
 
 /**
- * Backtest: walk history in 5-trading-day steps, generate the verdict the
- * screener would have given on that day, and check whether the NEXT 5 trading
- * days moved in the predicted direction (up for BUY, down for SELL).
- * Prediction rate = correct calls / total calls.
+ * Combine the active votes at one bar, weighting each voter by the edge it
+ * has PROVEN on this stock so far (Laplace-smoothed hit rate above 50%).
+ * Unproven or losing voters contribute only a tiny base weight, so early on
+ * this behaves like majority voting and sharpens as evidence accumulates.
  */
-function backtest(closes, volumes) {
-  let total = 0;
-  let correct = 0;
-  let buySignals = 0;
-  let sellSignals = 0;
-  for (let t = 60; t <= closes.length - 6; t += 5) {
-    const s = computeSignals(closes, volumes, t, false);
-    if (!s || s.verdict === "HOLD") continue;
-    const fwd = (closes[t + 5] - closes[t]) / closes[t];
-    total++;
-    if (s.verdict === "BUY") {
-      buySignals++;
-      if (fwd > 0) correct++;
-    } else {
-      sellSignals++;
-      if (fwd < 0) correct++;
-    }
+function composite(dirs, stats) {
+  let num = 0;
+  let mass = 0; // learned-edge mass only (excludes base weight)
+  let den = 0;
+  let active = 0;
+  for (let v = 0; v < dirs.length; v++) {
+    const d = dirs[v];
+    if (!d) continue;
+    active++;
+    const s = stats[v];
+    const hr = (s.hit + 3) / (s.n + 6); // smoothed toward 0.5
+    const edge = Math.max(0, hr - 0.5);
+    const w = edge + 0.02;
+    num += d * w;
+    den += w;
+    mass += edge;
   }
-  return {
-    predictionRate: total >= 5 ? +((correct / total) * 100).toFixed(0) : null,
-    samples: total,
-    buySignals,
-    sellSignals,
-  };
+  return { score: den ? num / den : 0, active, mass };
 }
 
-function analyze(stock) {
-  const closes = stock.bars.map((b) => b.close);
-  const volumes = stock.bars.map((b) => b.volume);
-  const last = closes.length - 1;
-  const s = computeSignals(closes, volumes, last, true);
-  if (!s) return null;
-  const bt = backtest(closes, volumes);
+function verdictFrom(score, active, mass) {
+  if (active < MIN_ACTIVE_VOTERS || mass < MIN_WEIGHT_MASS) return 0;
+  if (score >= SCORE_THRESHOLD) return 1;
+  if (score <= -SCORE_THRESHOLD) return -1;
+  return 0;
+}
+
+function wilson95(k, n) {
+  if (!n) return null;
+  const z = 1.96;
+  const p = k / n;
+  const d = 1 + (z * z) / n;
+  const center = (p + (z * z) / (2 * n)) / d;
+  const hw = (z * Math.sqrt((p * (1 - p)) / n + (z * z) / (4 * n * n))) / d;
+  return { lo: Math.max(0, center - hw), hi: Math.min(1, center + hw) };
+}
+
+// ---------- Walk-forward analysis of one stock ----------
+
+function analyze(stock, market) {
+  const c = stock.closes;
+  const n = c.length;
+  if (n < WARMUP + HORIZON + 10) return null;
+
+  const { voters, series } = buildVoters(stock, market);
+  const stats = voters.map(() => ({ hit: 0, n: 0 }));
+  const pending = []; // FIFO of {v, dir, idx} awaiting their outcome
+  let btTotal = 0;
+  let btCorrect = 0;
+  const btRets = [];
+
+  for (let i = WARMUP; i < n; i++) {
+    // 1) resolve votes whose outcome window has closed (no lookahead)
+    while (pending.length && pending[0].idx + HORIZON <= i) {
+      const p = pending.shift();
+      const fwd = c[p.idx + HORIZON] / c[p.idx] - 1;
+      stats[p.v].n++;
+      if ((fwd > 0 && p.dir === 1) || (fwd < 0 && p.dir === -1)) stats[p.v].hit++;
+    }
+
+    const dirs = voters.map((v) => v.dir(i));
+
+    // 2) backtest the composite verdict on weekly steps
+    if ((i - WARMUP) % SAMPLE_STEP === 0 && i + HORIZON < n) {
+      const { score, active, mass } = composite(dirs, stats);
+      const v = verdictFrom(score, active, mass);
+      if (v !== 0) {
+        const fwd = c[i + HORIZON] / c[i] - 1;
+        btTotal++;
+        if ((fwd > 0 && v === 1) || (fwd < 0 && v === -1)) btCorrect++;
+        btRets.push(v * fwd);
+      }
+    }
+
+    // 3) queue today's individual votes for later stat updates
+    if (i + HORIZON < n) {
+      for (let v = 0; v < dirs.length; v++) {
+        if (dirs[v] !== 0) pending.push({ v, dir: dirs[v], idx: i });
+      }
+    }
+  }
+
+  // Live verdict at the last bar, using everything learned so far
+  const last = n - 1;
+  const dirs = voters.map((v) => v.dir(last));
+  const { score, active, mass } = composite(dirs, stats);
+  const liveVerdict = verdictFrom(score, active, mass);
+  let verdict = liveVerdict === 1 ? "BUY" : liveVerdict === -1 ? "SELL" : "HOLD";
+
+  // Explain: active voters agreeing with the composite, strongest edge first
+  const side = score >= 0 ? "buy" : "sell";
+  const signals = voters
+    .map((v, vi) => ({ v, vi, d: dirs[vi] }))
+    .filter((x) => x.d !== 0 && x.d === Math.sign(score || 1))
+    .map((x) => {
+      const s = stats[x.vi];
+      const hr = s.n ? Math.round((s.hit / s.n) * 100) : null;
+      return {
+        side,
+        weight: Math.max(0, (s.hit + 3) / (s.n + 6) - 0.5),
+        text:
+          hr != null && s.n >= 10
+            ? `${x.v.label} — right ${hr}% of ${s.n} past calls on this stock`
+            : `${x.v.label} (limited history on this stock)`,
+      };
+    })
+    .sort((a, b) => b.weight - a.weight)
+    .slice(0, 4)
+    .map(({ side: sd, text }) => ({ side: sd, text }));
+
+  // Backtest metrics
+  const predictionRate =
+    btTotal >= 5 ? Math.round((btCorrect / btTotal) * 100) : null;
+  const ci = btTotal >= 5 ? wilson95(btCorrect, btTotal) : null;
+  const expectancy = btRets.length
+    ? +((btRets.reduce((a, r) => a + r, 0) / btRets.length) * 100).toFixed(2)
+    : null;
+
+  // Decision gate: don't surface a live call this method hasn't earned
+  // on this particular stock.
+  const qualified =
+    predictionRate != null &&
+    predictionRate >= DECISION_MIN_RATE &&
+    expectancy != null &&
+    expectancy > DECISION_MIN_EDGE;
+  if (verdict !== "HOLD" && !qualified) verdict = "HOLD";
+
+  // Decision rank: validated edge first, tempered by sample size,
+  // plus current signal strength.
+  const sampleFactor = Math.min(1, btTotal / 30);
+  const rank =
+    ((predictionRate != null ? predictionRate - 50 : 0) * 1.5 +
+      (expectancy != null ? expectancy * 8 : 0)) *
+      sampleFactor +
+    Math.abs(score) * 20;
+
+  const rsiLast = series.rsi14[last];
+  const volRatio =
+    series.vol20[last] ? series.vol5[last] / series.vol20[last] : 1;
 
   return {
     symbol: stock.symbol,
     name: stock.name,
     shariah: SHARIAH_COMPLIANT.has(stock.symbol),
-    price: +s.price.toFixed(2),
-    chg1d: +pctChangeAt(closes, 1, last).toFixed(2),
-    chg5d: s.chg5d != null ? +s.chg5d.toFixed(2) : null,
-    chg20d: s.chg20d != null ? +s.chg20d.toFixed(2) : null,
-    rsi: s.rsi14 != null ? +s.rsi14.toFixed(1) : null,
-    sma20: +s.sma20.toFixed(2),
-    sma50: +s.sma50.toFixed(2),
-    volRatio: +s.volRatio.toFixed(2),
-    buyScore: s.buyScore,
-    sellScore: s.sellScore,
-    verdict: s.verdict,
-    signals: s.signals,
-    predictionRate: bt.predictionRate,
-    backtestSamples: bt.samples,
-    spark: closes.slice(-30).map((c) => +c.toFixed(2)),
+    price: +c[last].toFixed(2),
+    chg1d: n > 1 ? +(((c[last] - c[last - 1]) / c[last - 1]) * 100).toFixed(2) : null,
+    chg5d: series.chg5[last] != null ? +series.chg5[last].toFixed(2) : null,
+    chg20d: series.chg20[last] != null ? +series.chg20[last].toFixed(2) : null,
+    rsi: rsiLast != null ? +rsiLast.toFixed(1) : null,
+    volRatio: +volRatio.toFixed(2),
+    buyScore: score > 0 ? Math.round(score * 100) : 0,
+    sellScore: score < 0 ? Math.round(-score * 100) : 0,
+    verdict,
+    signals,
+    predictionRate,
+    ciLow: ci ? Math.round(ci.lo * 100) : null,
+    ciHigh: ci ? Math.round(ci.hi * 100) : null,
+    expectancy,
+    backtestSamples: btTotal,
+    rank: +rank.toFixed(1),
+    spark: c.slice(-30).map((x) => +x.toFixed(2)),
   };
 }
 
 // ---------- Screen ----------
 
 function buildSummary(stocks) {
-  const buys = stocks.filter((s) => s.verdict === "BUY");
-  const sells = stocks.filter((s) => s.verdict === "SELL");
-  const holds = stocks.filter((s) => s.verdict === "HOLD");
-
-  const rated = stocks.filter((s) => s.predictionRate != null);
-  const avgPredictionRate = rated.length
-    ? +(
-        rated.reduce((a, s) => a + s.predictionRate, 0) / rated.length
-      ).toFixed(0)
-    : null;
-
-  const avgWeekMove = +(
-    stocks.reduce((a, s) => a + (s.chg5d || 0), 0) / stocks.length
-  ).toFixed(1);
-
-  const breadth =
-    buys.length > sells.length * 1.5
-      ? "bullish"
-      : sells.length > buys.length * 1.5
-      ? "bearish"
-      : "mixed";
-
-  // Best pick: strongest buy, breaking ties by historical prediction rate.
-  const topBuy = [...buys].sort(
-    (a, b) =>
-      b.buyScore - a.buyScore ||
-      (b.predictionRate || 0) - (a.predictionRate || 0)
-  )[0];
-  const topSell = [...sells].sort(
-    (a, b) =>
-      b.sellScore - a.sellScore ||
-      (b.predictionRate || 0) - (a.predictionRate || 0)
-  )[0];
-
+  const picks = stocks.filter((s) => s.verdict !== "HOLD");
+  const buys = stocks.filter((s) => s.verdict === "BUY").length;
   return {
-    buys: buys.length,
-    sells: sells.length,
-    holds: holds.length,
-    breadth,
-    avgWeekMove,
-    avgPredictionRate,
-    topBuy: topBuy
-      ? { symbol: topBuy.symbol, score: topBuy.buyScore, predictionRate: topBuy.predictionRate }
+    buys,
+    sells: picks.length - buys,
+    holds: stocks.length - picks.length,
+    // averages describe the actionable picks (all of which passed the gate)
+    avgPredictionRate: picks.length
+      ? Math.round(picks.reduce((a, s) => a + s.predictionRate, 0) / picks.length)
       : null,
-    topSell: topSell
-      ? { symbol: topSell.symbol, score: topSell.sellScore, predictionRate: topSell.predictionRate }
+    avgEdge: picks.length
+      ? +(picks.reduce((a, s) => a + s.expectancy, 0) / picks.length).toFixed(2)
       : null,
   };
 }
 
 async function runScreen() {
+  let market = null;
+  let spyLast = null;
+  try {
+    const spy = await fetchHistory("SPY");
+    market = prepMarket(spy);
+    const k = spy.closes.length - 1;
+    spyLast = {
+      above200: market.sma200[k] != null && spy.closes[k] > market.sma200[k],
+      chg20d: market.chg20[k] != null ? +market.chg20[k].toFixed(1) : null,
+    };
+  } catch (e) {
+    // proceed without market context; regime/rel-strength voters go silent
+  }
+
   const raw = await mapWithConcurrency(WATCHLIST, 6, fetchHistory);
   const analyzed = [];
   const failed = [];
@@ -396,14 +650,21 @@ async function runScreen() {
       failed.push(r.symbol);
       continue;
     }
-    const a = analyze(r);
+    const a = analyze(r, market);
     if (a) analyzed.push(a);
   }
-  analyzed.sort((a, b) => b.buyScore - a.buyScore);
+  analyzed.sort((a, b) => b.rank - a.rank);
   return {
     generatedAt: new Date().toISOString(),
     scanned: analyzed.length,
     failed,
+    market: spyLast
+      ? {
+          regime: spyLast.above200 ? "risk-on" : "risk-off",
+          spyAbove200: spyLast.above200,
+          spyChg20d: spyLast.chg20d,
+        }
+      : null,
     summary: buildSummary(analyzed),
     stocks: analyzed,
   };
@@ -486,6 +747,10 @@ const server = http.createServer(async (req, res) => {
   });
 });
 
-server.listen(PORT, () => {
-  console.log(`US Stock Weekly Picks running at http://localhost:${PORT}`);
-});
+if (require.main === module) {
+  server.listen(PORT, () => {
+    console.log(`US Stock Weekly Picks running at http://localhost:${PORT}`);
+  });
+}
+
+module.exports = { runScreen };

@@ -26,6 +26,7 @@ export default function StockTable({ stocks, showShariah = true }) {
             <TableCell align="right">1 mo</TableCell>
             <TableCell align="right">RSI</TableCell>
             <TableCell align="right">Pred. rate</TableCell>
+            <TableCell align="right">Edge/wk</TableCell>
             {showShariah && (
               <TableCell align="center" title="Approximate Shariah screening">
                 ☪
@@ -50,8 +51,27 @@ export default function StockTable({ stocks, showShariah = true }) {
               <TableCell align="right" sx={num}>
                 {s.rsi ?? "–"}
               </TableCell>
-              <TableCell align="right" sx={num}>
+              <TableCell
+                align="right"
+                sx={num}
+                title={
+                  s.ciLow != null
+                    ? `95% CI ${s.ciLow}–${s.ciHigh}% over ${s.backtestSamples} signals`
+                    : undefined
+                }
+              >
                 {s.predictionRate != null ? s.predictionRate + "%" : "–"}
+              </TableCell>
+              <TableCell
+                align="right"
+                sx={{
+                  ...num,
+                  color: s.expectancy != null ? deltaColor(theme, s.expectancy) : undefined,
+                }}
+              >
+                {s.expectancy != null
+                  ? (s.expectancy > 0 ? "+" : "") + s.expectancy + "%"
+                  : "–"}
               </TableCell>
               {showShariah && (
                 <TableCell align="center">

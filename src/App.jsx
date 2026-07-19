@@ -117,11 +117,9 @@ export default function App() {
       : data.stocks
     : [];
   const summary = data ? buildSummary(visible) : null;
-  const buys = visible.filter((s) => s.verdict === "BUY").slice(0, 5);
-  const sells = visible
-    .filter((s) => s.verdict === "SELL")
-    .sort((a, b) => b.sellScore - a.sellScore)
-    .slice(0, 5);
+  const byRank = (a, b) => (b.rank ?? 0) - (a.rank ?? 0);
+  const buys = visible.filter((s) => s.verdict === "BUY").sort(byRank).slice(0, 5);
+  const sells = visible.filter((s) => s.verdict === "SELL").sort(byRank).slice(0, 5);
 
   return (
     <ThemeProvider theme={theme}>
@@ -267,7 +265,7 @@ export default function App() {
 
         {data && !loading && (
           <>
-            <SummaryCard summary={summary} scanned={visible.length} />
+            <SummaryCard summary={summary} scanned={visible.length} market={data.market} />
 
             <SectionTitle color="success.main">
               Buy candidates this week
@@ -276,8 +274,9 @@ export default function App() {
               buys.map((s) => <StockCard key={s.symbol} stock={s} side="buy" />)
             ) : (
               <Paper variant="outlined" sx={{ p: 2, color: "text.secondary", fontSize: "0.85rem" }}>
-                No strong buy setups this week — market signals are mixed.
-                Waiting is a position too.
+                No stock passes the reliability bar for buys right now
+                (historical hit rate ≥ 52% with positive edge). Waiting is a
+                position too.
               </Paper>
             )}
 
@@ -288,7 +287,7 @@ export default function App() {
               sells.map((s) => <StockCard key={s.symbol} stock={s} side="sell" />)
             ) : (
               <Paper variant="outlined" sx={{ p: 2, color: "text.secondary", fontSize: "0.85rem" }}>
-                No strong sell signals this week.
+                No stock passes the reliability bar for sells right now.
               </Paper>
             )}
 
