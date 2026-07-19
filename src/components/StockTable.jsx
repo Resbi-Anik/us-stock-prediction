@@ -1,6 +1,6 @@
 import { fmtPct, fmtPrice, deltaClass } from "../format.js";
 
-export default function StockTable({ stocks }) {
+export default function StockTable({ stocks, showShariah = true }) {
   return (
     <div className="tablebox">
       <table>
@@ -12,6 +12,7 @@ export default function StockTable({ stocks }) {
             <th>1 mo</th>
             <th>RSI</th>
             <th>Pred. rate</th>
+            {showShariah && <th title="Approximate Shariah screening">☪</th>}
             <th>Signal</th>
           </tr>
         </thead>
@@ -26,6 +27,16 @@ export default function StockTable({ stocks }) {
               <td className={deltaClass(s.chg20d)}>{fmtPct(s.chg20d)}</td>
               <td>{s.rsi ?? "–"}</td>
               <td>{s.predictionRate != null ? s.predictionRate + "%" : "–"}</td>
+              {showShariah && (
+                <td
+                  className="shariah-cell"
+                  aria-label={
+                    s.shariah ? "Shariah-compliant (approximate)" : "Not screened as compliant"
+                  }
+                >
+                  {s.shariah ? "✓" : "–"}
+                </td>
+              )}
               <td>
                 <span className={`pill ${s.verdict}`}>
                   {s.verdict === "BUY" ? "▲ " : s.verdict === "SELL" ? "▼ " : ""}

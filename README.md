@@ -29,6 +29,14 @@ Then open **http://localhost:3000**.
 
 ## What's on screen
 
+- **Shariah-compliant only toggle** — filters the whole app (summary, picks,
+  table) to the ~31 watchlist stocks that pass common Islamic index screenings
+  (business-activity + financial-ratio screens in the style of Dow Jones
+  Islamic Market / S&P Shariah). The classification lives in the
+  `SHARIAH_COMPLIANT` set in `server.js` and is **approximate and
+  informational — not a religious ruling**; verify individual stocks with a
+  screening service such as Zoya or Musaffa. Your choice is remembered on the
+  device.
 - **This week at a glance** — market breadth (bullish/bearish/mixed), counts of
   buy/sell/hold signals, average weekly move, average prediction rate, and the
   strongest/weakest names.

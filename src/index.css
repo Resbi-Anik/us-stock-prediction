@@ -96,6 +96,76 @@ h1 {
   margin: 12px 0 4px;
 }
 
+/* Shariah filter bar */
+.filterbar {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 10px 12px;
+  margin-top: 8px;
+}
+.switch-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  cursor: pointer;
+}
+.switch-label {
+  font-size: 0.85rem;
+  font-weight: 600;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.switch-note {
+  font-size: 0.68rem;
+  font-weight: 400;
+  color: var(--muted);
+}
+.switch {
+  flex: 0 0 auto;
+  width: 46px;
+  height: 26px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--rate-track);
+  position: relative;
+  cursor: pointer;
+  padding: 0;
+  transition: background 0.15s ease;
+}
+.switch .knob {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: var(--surface);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25);
+  transition: left 0.15s ease;
+}
+.switch.on {
+  background: var(--good);
+  border-color: var(--good);
+}
+.switch.on .knob {
+  left: 23px;
+}
+
+.badge.shariah {
+  background: transparent;
+  border: 1px solid var(--good-text);
+  color: var(--good-text);
+  margin-left: 6px;
+}
+
+.shariah-cell {
+  color: var(--good-text);
+  font-weight: 700;
+}
+
 /* Summary card */
 .summary-card {
   background: var(--surface);

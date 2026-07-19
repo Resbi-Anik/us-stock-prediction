@@ -2,11 +2,15 @@ import { useCallback, useEffect, useState } from "react";
 import SummaryCard from "./components/SummaryCard.jsx";
 import StockCard from "./components/StockCard.jsx";
 import StockTable from "./components/StockTable.jsx";
+import { buildSummary } from "./summary.js";
 
 export default function App() {
   const [data, setData] = useState(null);
   const [error, setError] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [shariahOnly, setShariahOnly] = useState(
+    () => localStorage.getItem("shariahOnly") === "1"
+  );
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -26,15 +30,24 @@ export default function App() {
     load();
   }, [load]);
 
-  const buys = data
-    ? data.stocks.filter((s) => s.verdict === "BUY").slice(0, 5)
+  const toggleShariah = () => {
+    setShariahOnly((v) => {
+      localStorage.setItem("shariahOnly", v ? "0" : "1");
+      return !v;
+    });
+  };
+
+  const visible = data
+    ? shariahOnly
+      ? data.stocks.filter((s) => s.shariah)
+      : data.stocks
     : [];
-  const sells = data
-    ? data.stocks
-        .filter((s) => s.verdict === "SELL")
-        .sort((a, b) => b.sellScore - a.sellScore)
-        .slice(0, 5)
-    : [];
+  const summary = data ? buildSummary(visible) : null;
+  const buys = visible.filter((s) => s.verdict === "BUY").slice(0, 5);
+  const sells = visible
+    .filter((s) => s.verdict === "SELL")
+    .sort((a, b) => b.sellScore - a.sellScore)
+    .slice(0, 5);
 
   return (
     <div className="wrap">
@@ -44,8 +57,8 @@ export default function App() {
           <div className="sub">
             {data
               ? `Updated ${new Date(data.generatedAt).toLocaleString()} · ${
-                  data.scanned
-                } stocks scanned`
+                  visible.length
+                } stocks${shariahOnly ? " (Shariah-compliant)" : " scanned"}`
               : loading
               ? "Scanning US stocks…"
               : "Update failed"}
@@ -61,6 +74,27 @@ export default function App() {
         historical backtest hit rates — past performance does not guarantee
         future results. Signals ignore news, earnings, and fundamentals. Do your
         own research.
+      </div>
+
+      <div className="filterbar">
+        <label className="switch-row">
+          <span className="switch-label">
+            ☪ Shariah-compliant only
+            <span className="switch-note">
+              approximate screening — not a religious ruling; verify with a
+              service like Zoya or Musaffa
+            </span>
+          </span>
+          <button
+            type="button"
+            role="switch"
+            aria-checked={shariahOnly}
+            className={`switch ${shariahOnly ? "on" : ""}`}
+            onClick={toggleShariah}
+          >
+            <span className="knob" />
+          </button>
+        </label>
       </div>
 
       {loading && (
@@ -79,7 +113,7 @@ export default function App() {
 
       {data && !loading && (
         <>
-          <SummaryCard summary={data.summary} scanned={data.scanned} />
+          <SummaryCard summary={summary} scanned={visible.length} />
 
           <h2>
             <span className="dot buy" />
@@ -104,8 +138,11 @@ export default function App() {
             <div className="card empty">No strong sell signals this week.</div>
           )}
 
-          <h2>All {data.scanned} stocks scanned</h2>
-          <StockTable stocks={data.stocks} />
+          <h2>
+            All {visible.length}
+            {shariahOnly ? " Shariah-compliant" : ""} stocks
+          </h2>
+          <StockTable stocks={visible} showShariah={!shariahOnly} />
         </>
       )}
 

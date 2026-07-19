@@ -32,6 +32,23 @@ const WATCHLIST = [
   "CAT", "BA", "GE", "XOM", "CVX", "LIN", "T",
 ];
 
+/**
+ * Approximate Shariah-compliance classification per ticker, following common
+ * Islamic index screenings (business-activity + financial-ratio screens, in
+ * the style of Dow Jones Islamic Market / S&P Shariah / Zoya). Excluded here:
+ * conventional banks & insurers (JPM, BAC, GS, MS, AXP, BRK-B, UNH),
+ * entertainment content (NFLX, DIS), pork/alcohol revenue (MCD, WMT, COST),
+ * and high-debt or defense-heavy names (AVGO, ORCL, BA, GE, T).
+ * This is informational, NOT a fatwa — verify with a screening service.
+ */
+const SHARIAH_COMPLIANT = new Set([
+  "AAPL", "MSFT", "NVDA", "GOOGL", "AMZN", "META", "TSLA", "AMD", "CRM",
+  "ADBE", "INTC", "QCOM", "PLTR", "UBER", "SHOP", "V", "MA",
+  "JNJ", "LLY", "PFE", "MRK", "ABBV",
+  "HD", "NKE", "SBUX", "KO", "PEP",
+  "CAT", "XOM", "CVX", "LIN",
+]);
+
 let cache = { at: 0, payload: null };
 let inflight = null;
 
@@ -298,6 +315,7 @@ function analyze(stock) {
   return {
     symbol: stock.symbol,
     name: stock.name,
+    shariah: SHARIAH_COMPLIANT.has(stock.symbol),
     price: +s.price.toFixed(2),
     chg1d: +pctChangeAt(closes, 1, last).toFixed(2),
     chg5d: s.chg5d != null ? +s.chg5d.toFixed(2) : null,

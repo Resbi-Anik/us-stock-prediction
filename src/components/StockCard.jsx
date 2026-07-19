@@ -14,6 +14,7 @@ export default function StockCard({ stock, side }) {
           <span className={`badge ${side}`}>
             {side === "buy" ? "▲ BUY CANDIDATE" : "▼ SELL / AVOID"}
           </span>
+          {stock.shariah && <span className="badge shariah">☪ SHARIAH</span>}
         </div>
         <div>
           <div className="price">${fmtPrice(stock.price)}</div>
