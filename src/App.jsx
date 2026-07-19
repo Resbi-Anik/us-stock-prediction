@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ThemeProvider } from "@mui/material/styles";
 import CssBaseline from "@mui/material/CssBaseline";
 import Container from "@mui/material/Container";
@@ -9,7 +9,9 @@ import IconButton from "@mui/material/IconButton";
 import Alert from "@mui/material/Alert";
 import Paper from "@mui/material/Paper";
 import Switch from "@mui/material/Switch";
+import Chip from "@mui/material/Chip";
 import CircularProgress from "@mui/material/CircularProgress";
+import LinearProgress from "@mui/material/LinearProgress";
 import Stack from "@mui/material/Stack";
 import RefreshIcon from "@mui/icons-material/Refresh";
 import DarkModeIcon from "@mui/icons-material/DarkMode";
@@ -20,7 +22,9 @@ import SummaryCard from "./components/SummaryCard.jsx";
 import StockCard from "./components/StockCard.jsx";
 import StockTable from "./components/StockTable.jsx";
 import { buildSummary } from "./summary.js";
-import { getTheme } from "./theme.js";
+import { getTheme, BRAND_GRADIENT } from "./theme.js";
+
+const AUTO_REFRESH_SECONDS = 5 * 60;
 
 function initialMode() {
   const saved = localStorage.getItem("theme");
@@ -43,10 +47,13 @@ export default function App() {
   const [data, setData] = useState(null);
   const [error, setError] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [nextIn, setNextIn] = useState(AUTO_REFRESH_SECONDS);
   const [mode, setMode] = useState(initialMode);
   const [shariahOnly, setShariahOnly] = useState(
     () => localStorage.getItem("shariahOnly") === "1"
   );
+  const loadingRef = useRef(false);
 
   const theme = useMemo(() => getTheme(mode), [mode]);
 
@@ -63,23 +70,46 @@ export default function App() {
     setShariahOnly(on);
   };
 
-  const load = useCallback(async () => {
-    setLoading(true);
+  /** background=true refreshes silently, keeping current data on screen. */
+  const load = useCallback(async (background = false) => {
+    if (loadingRef.current) return;
+    loadingRef.current = true;
+    if (background) setRefreshing(true);
+    else setLoading(true);
     setError(null);
     try {
       const res = await fetch("/api/screen");
       if (!res.ok) throw new Error("Server error " + res.status);
       setData(await res.json());
     } catch (e) {
-      setError(e.message);
+      if (!background) setError(e.message);
     } finally {
+      loadingRef.current = false;
       setLoading(false);
+      setRefreshing(false);
+      setNextIn(AUTO_REFRESH_SECONDS);
     }
   }, []);
 
   useEffect(() => {
     load();
   }, [load]);
+
+  // Countdown tick: auto-refresh from the API when it reaches zero.
+  useEffect(() => {
+    const id = setInterval(() => {
+      setNextIn((s) => {
+        if (s <= 1) {
+          load(true);
+          return AUTO_REFRESH_SECONDS;
+        }
+        return s - 1;
+      });
+    }, 1000);
+    return () => clearInterval(id);
+  }, [load]);
+
+  const countdown = `${Math.floor(nextIn / 60)}:${String(nextIn % 60).padStart(2, "0")}`;
 
   const visible = data
     ? shariahOnly
@@ -96,40 +126,93 @@ export default function App() {
   return (
     <ThemeProvider theme={theme}>
       <CssBaseline />
-      <Container maxWidth="sm" sx={{ py: 2 }}>
-        <Box sx={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 1 }}>
-          <Box>
-            <Typography variant="h1" sx={{ display: "flex", alignItems: "center", gap: 0.8 }}>
-              <ShowChartIcon color="primary" /> Weekly Picks
-            </Typography>
-            <Typography sx={{ fontSize: "0.8rem", color: "text.secondary", mt: 0.3 }}>
-              {data
-                ? `Updated ${new Date(data.generatedAt).toLocaleString()} · ${
-                    visible.length
-                  } stocks${shariahOnly ? " (Shariah-compliant)" : " scanned"}`
-                : loading
-                ? "Scanning US stocks…"
-                : "Update failed"}
-            </Typography>
+      <Box
+        component="header"
+        sx={{
+          position: "sticky",
+          top: 0,
+          zIndex: 10,
+          backdropFilter: "blur(14px)",
+          WebkitBackdropFilter: "blur(14px)",
+          bgcolor:
+            mode === "light" ? "rgba(249,249,247,0.82)" : "rgba(13,13,13,0.82)",
+          borderBottom: 1,
+          borderColor: "divider",
+        }}
+      >
+        <Container maxWidth="sm" sx={{ py: 1.2 }}>
+          <Box sx={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 1 }}>
+            <Box>
+              <Typography variant="h1" sx={{ display: "flex", alignItems: "center", gap: 0.8 }}>
+                <ShowChartIcon color="primary" />
+                <Box
+                  component="span"
+                  sx={{
+                    background: BRAND_GRADIENT,
+                    WebkitBackgroundClip: "text",
+                    WebkitTextFillColor: "transparent",
+                    backgroundClip: "text",
+                  }}
+                >
+                  Weekly Picks
+                </Box>
+              </Typography>
+              <Typography sx={{ fontSize: "0.75rem", color: "text.secondary", mt: 0.2 }}>
+                {data
+                  ? `Updated ${new Date(data.generatedAt).toLocaleTimeString()} · ${
+                      visible.length
+                    } stocks${shariahOnly ? " (Shariah)" : ""}`
+                  : loading
+                  ? "Scanning US stocks…"
+                  : "Update failed"}
+              </Typography>
+            </Box>
+            <Stack direction="row" spacing={0.5} alignItems="center">
+              <IconButton
+                onClick={toggleMode}
+                aria-label={`Switch to ${mode === "light" ? "dark" : "light"} theme`}
+              >
+                {mode === "light" ? <DarkModeIcon /> : <LightModeIcon />}
+              </IconButton>
+              <Button
+                variant="outlined"
+                size="small"
+                startIcon={<RefreshIcon />}
+                onClick={() => load(false)}
+                disabled={loading || refreshing}
+              >
+                Refresh
+              </Button>
+            </Stack>
           </Box>
-          <Stack direction="row" spacing={0.5} alignItems="center">
-            <IconButton
-              onClick={toggleMode}
-              aria-label={`Switch to ${mode === "light" ? "dark" : "light"} theme`}
-            >
-              {mode === "light" ? <DarkModeIcon /> : <LightModeIcon />}
-            </IconButton>
-            <Button
-              variant="outlined"
-              size="small"
-              startIcon={<RefreshIcon />}
-              onClick={load}
-              disabled={loading}
-            >
-              Refresh
-            </Button>
-          </Stack>
-        </Box>
+        </Container>
+        {refreshing && (
+          <LinearProgress sx={{ height: 2, position: "absolute", bottom: 0, left: 0, right: 0 }} />
+        )}
+      </Box>
+
+      <Container maxWidth="sm" sx={{ py: 2 }}>
+        <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap" useFlexGap>
+          <Chip
+            size="small"
+            icon={
+              <CircleIcon
+                sx={{
+                  fontSize: 9,
+                  color: "#0ca30c !important",
+                  animation: "pulse 2s ease-in-out infinite",
+                  "@keyframes pulse": {
+                    "0%, 100%": { opacity: 1 },
+                    "50%": { opacity: 0.35 },
+                  },
+                }}
+              />
+            }
+            label={refreshing ? "Updating now…" : `Live · next update in ${countdown}`}
+            variant="outlined"
+            sx={{ fontSize: "0.7rem" }}
+          />
+        </Stack>
 
         <Alert severity="warning" variant="outlined" sx={{ mt: 1.5, fontSize: "0.75rem" }}>
           Educational tool, <b>not financial advice</b>. Prediction rates are
@@ -220,8 +303,8 @@ export default function App() {
         <Typography
           sx={{ fontSize: "0.7rem", color: "text.secondary", textAlign: "center", py: 3 }}
         >
-          Data: Yahoo Finance · Signals &amp; backtests recalculated every 15
-          min · Built with Claude Code
+          Data: Yahoo Finance · Auto-updates every 5 minutes · Built with
+          Claude Code (Fable)
         </Typography>
       </Container>
     </ThemeProvider>

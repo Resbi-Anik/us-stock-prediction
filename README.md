@@ -1,10 +1,12 @@
 # 📈 Weekly Picks — US Stocks
 
-A React web app (works on desktop and mobile, installable as a home-screen PWA)
-that scans 48 liquid US large-cap stocks and ranks the best **buy candidates**
-and **sell / avoid candidates** for the current week — each with a backtested
-**prediction rate** showing how often that stock's setup called the next week
-correctly over the past 2 years.
+A React + Material UI web app (works on desktop and mobile, installable as a
+home-screen PWA) that scans 48 liquid US large-cap stocks and ranks the best
+**buy candidates** and **sell / avoid candidates** for the current week — each
+with a backtested **prediction rate** showing how often that stock's setup
+called the next week correctly over the past 2 years. The app **auto-updates
+from the API every 5 minutes** (live countdown chip in the UI) and has a
+light/dark theme toggle.
 
 > ⚠️ **Not financial advice.** Prediction rates are historical backtest hit
 > rates — past performance does not guarantee future results. Signals look only
@@ -82,5 +84,6 @@ calls that were right. Fewer than 5 historical signals → "n/a".
 ## Customize
 
 - **Watchlist:** edit `WATCHLIST` at the top of `server.js`.
-- **Refresh interval:** `CACHE_TTL_MS` in `server.js`.
+- **Refresh interval:** `CACHE_TTL_MS` in `server.js` (server cache) and
+  `AUTO_REFRESH_SECONDS` in `src/App.jsx` (client polling) — both 5 minutes.
 - **Port:** `PORT=8080 node server.js`.
