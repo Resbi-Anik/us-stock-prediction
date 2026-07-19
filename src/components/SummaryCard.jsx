@@ -1,4 +1,11 @@
+import Card from "@mui/material/Card";
+import CardContent from "@mui/material/CardContent";
+import Typography from "@mui/material/Typography";
+import Paper from "@mui/material/Paper";
+import Box from "@mui/material/Box";
+import { useTheme } from "@mui/material/styles";
 import { fmtPct } from "../format.js";
+import { deltaColor } from "../theme.js";
 
 const BREADTH_TEXT = {
   bullish: "Market breadth is bullish — more stocks are set up to rise than fall.",
@@ -6,53 +13,67 @@ const BREADTH_TEXT = {
   mixed: "Market breadth is mixed — no clear direction across the watchlist.",
 };
 
-export default function SummaryCard({ summary, scanned }) {
+function Tile({ value, label, color }) {
   return (
-    <section className="summary-card">
-      <h2 className="summary-title">This week at a glance</h2>
-      <p className="summary-text">{BREADTH_TEXT[summary.breadth]}</p>
-      <div className="tiles">
-        <div className="tile">
-          <div className="tile-value up">{summary.buys}</div>
-          <div className="tile-label">buy signals</div>
-        </div>
-        <div className="tile">
-          <div className="tile-value down">{summary.sells}</div>
-          <div className="tile-label">sell signals</div>
-        </div>
-        <div className="tile">
-          <div className="tile-value">{summary.holds}</div>
-          <div className="tile-label">holds</div>
-        </div>
-        <div className="tile">
-          <div className="tile-value">
-            {summary.avgPredictionRate != null
-              ? summary.avgPredictionRate + "%"
-              : "–"}
-          </div>
-          <div className="tile-label">avg prediction rate</div>
-        </div>
-      </div>
-      <p className="summary-foot">
-        Average move this week across {scanned} stocks:{" "}
-        <b className={summary.avgWeekMove >= 0 ? "up" : "down"}>
-          {fmtPct(summary.avgWeekMove)}
-        </b>
-        {summary.topBuy && (
-          <>
-            {" "}· Strongest buy: <b>{summary.topBuy.symbol}</b>
-            {summary.topBuy.predictionRate != null &&
-              ` (${summary.topBuy.predictionRate}% hit rate)`}
-          </>
-        )}
-        {summary.topSell && (
-          <>
-            {" "}· Weakest: <b>{summary.topSell.symbol}</b>
-            {summary.topSell.predictionRate != null &&
-              ` (${summary.topSell.predictionRate}% hit rate)`}
-          </>
-        )}
-      </p>
-    </section>
+    <Paper variant="outlined" sx={{ p: 1.2, textAlign: "center" }}>
+      <Typography sx={{ fontSize: "1.3rem", fontWeight: 700, color }}>
+        {value}
+      </Typography>
+      <Typography sx={{ fontSize: "0.65rem", color: "text.secondary" }}>
+        {label}
+      </Typography>
+    </Paper>
+  );
+}
+
+export default function SummaryCard({ summary, scanned }) {
+  const theme = useTheme();
+  return (
+    <Card sx={{ mt: 2 }}>
+      <CardContent>
+        <Typography variant="h2" gutterBottom>
+          This week at a glance
+        </Typography>
+        <Typography sx={{ fontSize: "0.82rem", color: "text.secondary" }}>
+          {BREADTH_TEXT[summary.breadth]}
+        </Typography>
+        <Box
+          sx={{
+            display: "grid",
+            gridTemplateColumns: { xs: "repeat(2, 1fr)", sm: "repeat(4, 1fr)" },
+            gap: 1,
+            my: 1.5,
+          }}
+        >
+          <Tile value={summary.buys} label="buy signals" color={deltaColor(theme, 1)} />
+          <Tile value={summary.sells} label="sell signals" color="error.main" />
+          <Tile value={summary.holds} label="holds" />
+          <Tile
+            value={summary.avgPredictionRate != null ? summary.avgPredictionRate + "%" : "–"}
+            label="avg prediction rate"
+          />
+        </Box>
+        <Typography sx={{ fontSize: "0.75rem", color: "text.secondary" }}>
+          Average move this week across {scanned} stocks:{" "}
+          <Box component="b" sx={{ color: deltaColor(theme, summary.avgWeekMove) }}>
+            {fmtPct(summary.avgWeekMove)}
+          </Box>
+          {summary.topBuy && (
+            <>
+              {" "}· Strongest buy: <b>{summary.topBuy.symbol}</b>
+              {summary.topBuy.predictionRate != null &&
+                ` (${summary.topBuy.predictionRate}% hit rate)`}
+            </>
+          )}
+          {summary.topSell && (
+            <>
+              {" "}· Weakest: <b>{summary.topSell.symbol}</b>
+              {summary.topSell.predictionRate != null &&
+                ` (${summary.topSell.predictionRate}% hit rate)`}
+            </>
+          )}
+        </Typography>
+      </CardContent>
+    </Card>
   );
 }

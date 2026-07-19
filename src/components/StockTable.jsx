@@ -1,52 +1,92 @@
-import { fmtPct, fmtPrice, deltaClass } from "../format.js";
+import Table from "@mui/material/Table";
+import TableBody from "@mui/material/TableBody";
+import TableCell from "@mui/material/TableCell";
+import TableContainer from "@mui/material/TableContainer";
+import TableHead from "@mui/material/TableHead";
+import TableRow from "@mui/material/TableRow";
+import Paper from "@mui/material/Paper";
+import Chip from "@mui/material/Chip";
+import Box from "@mui/material/Box";
+import { useTheme } from "@mui/material/styles";
+import { fmtPct, fmtPrice } from "../format.js";
+import { deltaColor } from "../theme.js";
+
+const num = { fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" };
 
 export default function StockTable({ stocks, showShariah = true }) {
+  const theme = useTheme();
   return (
-    <div className="tablebox">
-      <table>
-        <thead>
-          <tr>
-            <th>Symbol</th>
-            <th>Price</th>
-            <th>1 wk</th>
-            <th>1 mo</th>
-            <th>RSI</th>
-            <th>Pred. rate</th>
-            {showShariah && <th title="Approximate Shariah screening">☪</th>}
-            <th>Signal</th>
-          </tr>
-        </thead>
-        <tbody>
+    <TableContainer component={Paper} variant="outlined">
+      <Table size="small">
+        <TableHead>
+          <TableRow>
+            <TableCell>Symbol</TableCell>
+            <TableCell align="right">Price</TableCell>
+            <TableCell align="right">1 wk</TableCell>
+            <TableCell align="right">1 mo</TableCell>
+            <TableCell align="right">RSI</TableCell>
+            <TableCell align="right">Pred. rate</TableCell>
+            {showShariah && (
+              <TableCell align="center" title="Approximate Shariah screening">
+                ☪
+              </TableCell>
+            )}
+            <TableCell align="right">Signal</TableCell>
+          </TableRow>
+        </TableHead>
+        <TableBody>
           {stocks.map((s) => (
-            <tr key={s.symbol}>
-              <td>
-                <span className="tsym">{s.symbol}</span>
-              </td>
-              <td>${fmtPrice(s.price)}</td>
-              <td className={deltaClass(s.chg5d)}>{fmtPct(s.chg5d)}</td>
-              <td className={deltaClass(s.chg20d)}>{fmtPct(s.chg20d)}</td>
-              <td>{s.rsi ?? "–"}</td>
-              <td>{s.predictionRate != null ? s.predictionRate + "%" : "–"}</td>
+            <TableRow key={s.symbol} sx={{ "&:last-child td": { border: 0 } }}>
+              <TableCell sx={{ fontWeight: 600 }}>{s.symbol}</TableCell>
+              <TableCell align="right" sx={num}>
+                ${fmtPrice(s.price)}
+              </TableCell>
+              <TableCell align="right" sx={{ ...num, color: deltaColor(theme, s.chg5d) }}>
+                {fmtPct(s.chg5d)}
+              </TableCell>
+              <TableCell align="right" sx={{ ...num, color: deltaColor(theme, s.chg20d) }}>
+                {fmtPct(s.chg20d)}
+              </TableCell>
+              <TableCell align="right" sx={num}>
+                {s.rsi ?? "–"}
+              </TableCell>
+              <TableCell align="right" sx={num}>
+                {s.predictionRate != null ? s.predictionRate + "%" : "–"}
+              </TableCell>
               {showShariah && (
-                <td
-                  className="shariah-cell"
-                  aria-label={
-                    s.shariah ? "Shariah-compliant (approximate)" : "Not screened as compliant"
-                  }
-                >
-                  {s.shariah ? "✓" : "–"}
-                </td>
+                <TableCell align="center">
+                  <Box
+                    component="span"
+                    sx={{ color: deltaColor(theme, 1), fontWeight: 700 }}
+                    aria-label={
+                      s.shariah
+                        ? "Shariah-compliant (approximate)"
+                        : "Not screened as compliant"
+                    }
+                  >
+                    {s.shariah ? "✓" : "–"}
+                  </Box>
+                </TableCell>
               )}
-              <td>
-                <span className={`pill ${s.verdict}`}>
-                  {s.verdict === "BUY" ? "▲ " : s.verdict === "SELL" ? "▼ " : ""}
-                  {s.verdict}
-                </span>
-              </td>
-            </tr>
+              <TableCell align="right">
+                <Chip
+                  size="small"
+                  label={s.verdict}
+                  color={
+                    s.verdict === "BUY"
+                      ? "success"
+                      : s.verdict === "SELL"
+                      ? "error"
+                      : "default"
+                  }
+                  variant="outlined"
+                  sx={{ fontSize: "0.65rem" }}
+                />
+              </TableCell>
+            </TableRow>
           ))}
-        </tbody>
-      </table>
-    </div>
+        </TableBody>
+      </Table>
+    </TableContainer>
   );
 }

@@ -73,8 +73,10 @@ calls that were right. Fewer than 5 historical signals → "n/a".
 - `server.js` — zero-dependency Node server: fetches Yahoo Finance data (no API
   key), computes indicators + backtests, serves `/api/screen` and the built
   React app from `dist/`. Results cached 15 min.
-- `src/` — React app (Vite): `App.jsx`, `components/` (SummaryCard, StockCard,
-  Sparkline, StockTable), `format.js`, `index.css` (light + dark mode).
+- `src/` — React app (Vite + Material UI): `App.jsx`, `components/`
+  (SummaryCard, StockCard, Sparkline, StockTable), `theme.js` (MUI light/dark
+  themes — the header moon/sun button toggles them, defaulting to the system
+  preference and remembered per device), `format.js`, `summary.js`.
 - `public/` — PWA manifest and icons (copied into `dist/` at build).
 
 ## Customize
