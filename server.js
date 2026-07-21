@@ -42,6 +42,8 @@ const http = require("http");
 const https = require("https");
 const fs = require("fs");
 const path = require("path");
+const { WATCHLIST, SECTOR_BY_SYMBOL, SHARIAH_BY_SYMBOL } = require("./universe.js");
+const track = require("./track.js");
 
 const PORT = process.env.PORT || 3000;
 const CACHE_TTL_MS = 5 * 60 * 1000;
@@ -74,27 +76,14 @@ const FEATURES = [
 ];
 const D = FEATURES.length;
 
-// Liquid large/mega-cap US stocks across sectors.
-const WATCHLIST = [
-  "AAPL", "MSFT", "NVDA", "GOOGL", "AMZN", "META", "TSLA", "AVGO", "AMD", "CRM",
-  "ORCL", "ADBE", "NFLX", "INTC", "QCOM", "PLTR", "UBER", "SHOP",
-  "JPM", "BAC", "GS", "MS", "V", "MA", "AXP", "BRK-B",
-  "UNH", "JNJ", "LLY", "PFE", "MRK", "ABBV",
-  "WMT", "COST", "HD", "MCD", "NKE", "SBUX", "KO", "PEP", "DIS",
-  "CAT", "BA", "GE", "XOM", "CVX", "LIN", "T",
-];
+// Universe (~120 liquid US large-caps across all 11 GICS sectors, each tagged
+// with sector for sector-neutral ranking and an approximate Shariah flag) is
+// defined in universe.js and imported above as WATCHLIST / SECTOR_BY_SYMBOL /
+// SHARIAH_BY_SYMBOL.
 
-/**
- * Approximate Shariah-compliance classification per ticker, following common
- * Islamic index screenings. Informational, NOT a fatwa — verify with a service.
- */
-const SHARIAH_COMPLIANT = new Set([
-  "AAPL", "MSFT", "NVDA", "GOOGL", "AMZN", "META", "TSLA", "AMD", "CRM",
-  "ADBE", "INTC", "QCOM", "PLTR", "UBER", "SHOP", "V", "MA",
-  "JNJ", "LLY", "PFE", "MRK", "ABBV",
-  "HD", "NKE", "SBUX", "KO", "PEP",
-  "CAT", "XOM", "CVX", "LIN",
-]);
+// Minimum peers in a sector on a given day before the ranking target is
+// demeaned within that sector (else it falls back to the whole-market mean).
+const MIN_SECTOR_PEERS = 3;
 
 let cache = { at: 0, payload: null };
 let inflight = null;
@@ -430,6 +419,7 @@ function buildDataset(stocks, market) {
     const { X, vol20d } = featureMatrix(stock, market);
     const c = stock.closes;
     const n = c.length;
+    const sector = SECTOR_BY_SYMBOL[stock.symbol] || "Other";
     let lastValid = -1;
     for (let i = WARMUP; i < n; i++) {
       if (X[i]) lastValid = i;
@@ -437,9 +427,9 @@ function buildDataset(stocks, market) {
       const fwd = c[i + HORIZON] / c[i] - 1;
       const d = stock.dates[i];
       if (!byDate.has(d)) byDate.set(d, []);
-      byDate.get(d).push({ si, i, x: X[i], fwd });
+      byDate.get(d).push({ si, i, x: X[i], fwd, sector });
     }
-    perStock.push({ stock, X, vol20d, lastValid });
+    perStock.push({ stock, X, vol20d, lastValid, sector });
   });
 
   const trainRel = { X: [], Y: [] };
@@ -451,8 +441,19 @@ function buildDataset(stocks, market) {
   for (const [date, arr] of byDate) {
     if (arr.length < 5) continue;
     const mean = arr.reduce((s, e) => s + e.fwd, 0) / arr.length;
+    // per-sector mean forward return for sector-neutral labelling
+    const secSum = {};
+    const secCnt = {};
     for (const e of arr) {
-      const relY = e.fwd > mean ? 1 : 0;
+      secSum[e.sector] = (secSum[e.sector] || 0) + e.fwd;
+      secCnt[e.sector] = (secCnt[e.sector] || 0) + 1;
+    }
+    for (const e of arr) {
+      // Sector-neutral target: beat your sector's peers (fall back to the
+      // whole-market mean when the sector has too few names that day).
+      const secMean =
+        secCnt[e.sector] >= MIN_SECTOR_PEERS ? secSum[e.sector] / secCnt[e.sector] : mean;
+      const relY = e.fwd > secMean ? 1 : 0;
       const absY = e.fwd > 0 ? 1 : 0;
       allRel.X.push(e.x);
       allRel.Y.push(relY);
@@ -584,7 +585,8 @@ function analyzeStock(entry, relModel, riskBands) {
   return {
     symbol: stock.symbol,
     name: stock.name,
-    shariah: SHARIAH_COMPLIANT.has(stock.symbol),
+    sector: entry.sector,
+    shariah: !!SHARIAH_BY_SYMBOL[stock.symbol],
     price: +c[i].toFixed(2),
     chg1d: i >= 1 ? +(((c[i] - c[i - 1]) / c[i - 1]) * 100).toFixed(2) : null,
     chg5d: m5[i] != null ? +m5[i].toFixed(2) : null,
@@ -670,9 +672,17 @@ async function runScreen() {
   const k = market.closes.length - 1;
   const spyAbove200 = market.sma200[k] != null && market.closes[k] > market.sma200[k];
 
+  // Record today's ranking (idempotent per data-date) and read back the
+  // forward-only, realized track record accrued so far.
+  const asOf = market.dates[k];
+  track.record(asOf, analyzed);
+  const trackRecord = track.summary();
+
   return {
     generatedAt: new Date().toISOString(),
+    asOf,
     scanned: N,
+    universe: WATCHLIST.length,
     failed,
     horizonDays: HORIZON,
     horizonLabel: "~1 month (21 trading days)",
@@ -683,6 +693,7 @@ async function runScreen() {
       spyChg20d: market.mom20[k] != null ? +market.mom20[k].toFixed(1) : null,
     },
     summary: buildSummary(analyzed),
+    trackRecord,
     stocks: analyzed,
   };
 }

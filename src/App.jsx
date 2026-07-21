@@ -19,6 +19,7 @@ import ArrowUpwardIcon from "@mui/icons-material/ArrowUpward";
 import ArrowDownwardIcon from "@mui/icons-material/ArrowDownward";
 import SummaryCard from "./components/SummaryCard.jsx";
 import ModelReliabilityCard from "./components/ModelReliabilityCard.jsx";
+import TrackRecordCard from "./components/TrackRecordCard.jsx";
 import StockCard from "./components/StockCard.jsx";
 import StockTable from "./components/StockTable.jsx";
 import { rankAndTier, buildSummary } from "./summary.js";
@@ -351,6 +352,7 @@ export default function App() {
                 />
               </Paper>
               <ModelReliabilityCard model={data.model} />
+              <TrackRecordCard track={data.trackRecord} />
               <SummaryCard
                 summary={summary}
                 scanned={ranked.length}

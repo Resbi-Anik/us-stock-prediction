@@ -90,6 +90,9 @@ export default function StockCard({ stock, model }) {
           {stock.shariah && (
             <Chip size="small" label="☪" color="success" variant="outlined" sx={{ fontSize: "0.66rem", height: 22 }} title="Approx. Shariah-compliant" />
           )}
+          {stock.sector && (
+            <Chip size="small" label={stock.sector} variant="outlined" sx={{ fontSize: "0.62rem", height: 22, color: "text.secondary" }} />
+          )}
         </Stack>
 
         <Box sx={{ display: "flex", alignItems: "center", gap: 1.5, mt: 1.2 }}>

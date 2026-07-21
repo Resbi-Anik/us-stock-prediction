@@ -2,11 +2,13 @@
 
 A React + Material UI web app (responsive — a full-page two-column dashboard on
 desktop, a single stacked column on mobile, installable as a home-screen PWA)
-that scans 48 liquid US large-cap stocks and **ranks them by relative strength**
-with a pooled, walk-forward-validated model. Each stock shows its **rank /
-strength percentile**, a **reliable expected-range and risk tier**, and the
-model factors behind it. The app **auto-updates every 5 minutes** and has a
-light/dark theme toggle.
+that scans **~120 liquid US large-caps across all 11 GICS sectors** and
+**ranks them by sector-neutral relative strength** with a pooled,
+walk-forward-validated model. Each stock shows its **rank / strength
+percentile**, a **reliable expected-range and risk tier**, sector, and the
+model factors behind it. A **live track record** records the app's own picks
+forward and scores them ~1 month later. The app **auto-updates every 5
+minutes** and has a light/dark theme toggle.
 
 > ⚠️ **Not financial advice, and deliberately honest about its limits.**
 > Predicting a single stock's *absolute* up/down one month out barely beats
@@ -56,14 +58,17 @@ Then open **http://localhost:3000**.
 
 ## What's on screen
 
-- **Shariah-compliant only toggle** — filters the whole app (summary, picks,
-  table) to the ~31 watchlist stocks that pass common Islamic index screenings
-  (business-activity + financial-ratio screens in the style of Dow Jones
-  Islamic Market / S&P Shariah). The classification lives in the
-  `SHARIAH_COMPLIANT` set in `server.js` and is **approximate and
-  informational — not a religious ruling**; verify individual stocks with a
-  screening service such as Zoya or Musaffa. Your choice is remembered on the
-  device.
+- **Shariah-compliant only toggle** — filters the whole app (and re-ranks
+  within the filtered set) to the universe stocks that pass common Islamic
+  index screenings (business-activity + financial-ratio screens in the style of
+  Dow Jones Islamic Market / S&P Shariah). The classification lives in
+  `universe.js` and is **approximate and informational — not a religious
+  ruling**; verify individual stocks with a screening service such as Zoya or
+  Musaffa. Your choice is remembered on the device.
+- **Live track record** — the app snapshots its own ranking each trading day
+  and, ~1 month later, scores how the day's top-ranked picks did versus the
+  bottom-ranked. This is **forward, not backtested** — it starts empty and fills
+  in as real time passes (`track.js`, stored under git-ignored `data/`).
 - **Responsive layout** — on desktop, a sticky left rail (reliability card +
   summary + Shariah toggle) beside a wide main column of ranked cards and the
   full table; on mobile everything stacks into one column. No horizontal scroll
@@ -82,17 +87,22 @@ Then open **http://localhost:3000**.
 
 ## How the decision engine works
 
-The server pulls **~5 years of daily bars** for every stock plus the S&P 500
-(SPY) and builds **14 continuous technical features** per day: 1-week / 1-month
-/ 3-month / 6-month momentum, RSI-14, RSI-2, MACD histogram, distance from the
-20- and 50-day averages, Bollinger-band position, relative strength vs SPY,
-market regime (SPY vs its 200-day average), volatility, and volume-vs-average.
+The server pulls **~5 years of daily bars** for every stock (~120 names) plus
+the S&P 500 (SPY) and builds **14 continuous technical features** per day:
+1-week / 1-month / 3-month / 6-month momentum, RSI-14, RSI-2, MACD histogram,
+distance from the 20- and 50-day averages, Bollinger-band position, relative
+strength vs SPY, market regime (SPY vs its 200-day average), volatility, and
+volume-vs-average.
 
-**Ranking — pooled logistic regression on a cross-sectional target.** A single
-model is trained across *all* stocks (standardized features, L2) to predict
-whether a stock will **beat the average stock's return** over the next ~month.
-Its output is a **relative-strength score**; stocks are ranked by it and the top
-/ bottom fifth become the leans. There is no in-sample selection gate.
+**Ranking — pooled logistic regression on a sector-neutral cross-sectional
+target.** A single model is trained across *all* stocks (standardized features,
+L2) to predict whether a stock will **beat its own sector's peers** over the
+next ~month. Its output is a **relative-strength score**; stocks are ranked by
+it and the top / bottom fifth become the leans. There is no in-sample selection
+gate. A wider, sector-neutral universe was adopted because a bake-off showed it
+keeps the validated spread positive across two independent folds while
+spreading the top picks across ~8 sectors instead of clustering in high-vol
+tech.
 
 **Reliability — a real train/holdout split, every refresh.** The final ~12
 months are held out; the model trains only on earlier data. The app reports the
@@ -117,16 +127,20 @@ readout of what actually drove its score.
   key), builds features, trains the pooled ranking model (past-only for honest
   metrics, all-data for the live ranking) + volatility forecast, serves
   `/api/screen` and the built React app from `dist/`. Results cached 5 min.
+- `universe.js` — the ~120-name universe with sector and approximate Shariah
+  tags.
+- `track.js` — the forward-only live track record (persists to `data/`).
 - `src/` — React app (Vite + Material UI): `App.jsx`, `components/`
-  (ModelReliabilityCard, SummaryCard, StockCard, Sparkline, StockTable),
-  `theme.js` (MUI light/dark themes — the header moon/sun button toggles them,
-  defaulting to the system preference and remembered per device), `format.js`,
-  `summary.js`.
+  (ModelReliabilityCard, TrackRecordCard, SummaryCard, StockCard, Sparkline,
+  StockTable), `theme.js` (MUI light/dark themes — the header moon/sun button
+  toggles them, defaulting to the system preference and remembered per device),
+  `format.js`, `summary.js`.
 - `public/` — PWA manifest and icons (copied into `dist/` at build).
+- `data/` — git-ignored; holds the accruing track-record snapshots.
 
 ## Customize
 
-- **Watchlist:** edit `WATCHLIST` at the top of `server.js`.
+- **Universe / sectors / Shariah tags:** edit `universe.js`.
 - **Refresh interval:** `CACHE_TTL_MS` in `server.js` (server cache) and
   `AUTO_REFRESH_SECONDS` in `src/App.jsx` (client polling) — both 5 minutes.
 - **Port:** `PORT=8080 node server.js`.
