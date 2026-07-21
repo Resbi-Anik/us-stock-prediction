@@ -214,6 +214,7 @@ export default function App() {
             <Box
               sx={{
                 display: { xs: "none", sm: "inline-flex" },
+                alignSelf: "center",
                 alignItems: "center",
                 gap: 0.7,
                 height: 26,
