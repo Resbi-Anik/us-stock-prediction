@@ -14,36 +14,54 @@ export function deltaClass(v) {
   return v == null ? "" : v >= 0 ? "up" : "down";
 }
 
-/**
- * Confidence bucket for a backtested stock. Statistically honest:
- * "high confidence" requires the LOWER bound of the 95% CI to clear 50%
- * (i.e. even the pessimistic read of history says better than a coin flip)
- * plus a positive average edge.
- */
-export function rateBucket(s) {
-  if (s.predictionRate == null) return { label: "not enough history", cls: "na" };
-  if (s.backtestSamples < 15) return { label: "limited history", cls: "na" };
-  if (s.ciLow != null && s.ciLow >= 50 && s.expectancy > 0)
-    return { label: "high confidence", cls: "high" };
-  if (s.predictionRate >= 52 && s.expectancy > 0)
-    return { label: "moderate confidence", cls: "mid" };
-  return { label: "low confidence", cls: "low" };
+/** Human label + MUI color key for a verdict. Deliberately hedged wording:
+ *  the backtest shows direction has almost no edge, so these are "leans". */
+export function verdictMeta(verdict) {
+  switch (verdict) {
+    case "BUY":
+      return { label: "LEAN BUY", color: "success", side: "buy" };
+    case "SELL":
+      return { label: "LEAN SELL", color: "error", side: "sell" };
+    default:
+      return { label: "NEUTRAL", color: "default", side: "buy" };
+  }
 }
 
-/** One-line plain-English summary for a stock card. */
-export function summarize(s, side) {
-  const dir = side === "buy" ? "upward" : "downward";
-  if (s.predictionRate == null) {
-    return `Technical signals point ${dir}, but there are too few past signals to measure reliability.`;
+/** Risk tier -> label + MUI color (paired with the text label, never color-only). */
+export function riskMeta(tier) {
+  switch (tier) {
+    case "Low":
+      return { label: "Low risk", color: "success" };
+    case "High":
+      return { label: "High risk", color: "error" };
+    default:
+      return { label: "Medium risk", color: "warning" };
   }
-  const ci =
-    s.ciLow != null ? `, 95% CI ${s.ciLow}–${s.ciHigh}%` : "";
-  const edge =
-    s.expectancy != null
-      ? ` Average edge when it fired: ${s.expectancy > 0 ? "+" : ""}${s.expectancy}% per week.`
-      : "";
-  return (
-    `Signals point ${dir} — this stock's setup called the next week right ` +
-    `${s.predictionRate}% of the time over ~5 years (${s.backtestSamples} signals${ci}).${edge}`
-  );
+}
+
+/**
+ * Honest confidence wording for the directional probability, keyed off how far
+ * the model's own out-of-sample accuracy sits above the market base rate.
+ * When the model barely beats the base rate (it does), direction is low
+ * confidence regardless of how extreme a single probability looks.
+ */
+export function directionConfidence(model) {
+  const beats = model?.beatsBaseline;
+  if (beats == null) return { label: "unvalidated", cls: "na" };
+  if (beats >= 3) return { label: "some edge", cls: "high" };
+  if (beats >= 1) return { label: "slight edge", cls: "mid" };
+  return { label: "no proven edge", cls: "low" };
+}
+
+/** One-line, honest read for a stock card. */
+export function summarize(s, model) {
+  const range = `Expected move over the next month: about ±${s.expectedRangePct}% (one-sigma — roughly 2 of 3 months land inside; ${s.riskTier.toLowerCase()} risk). This range forecast is the reliable part.`;
+  const dir =
+    s.edgePts > 0
+      ? `Model leans up (${s.probUp}% vs ${(s.probUp - s.edgePts).toFixed(0)}% base rate)`
+      : s.edgePts < 0
+      ? `Model leans down (${s.probUp}% up vs ${(s.probUp - s.edgePts).toFixed(0)}% base rate)`
+      : `Model is neutral (${s.probUp}% up)`;
+  const conf = directionConfidence(model);
+  return `${dir} — but direction has ${conf.label} out-of-sample, so treat it lightly. ${range}`;
 }

@@ -1,16 +1,32 @@
 # 📈 Weekly Picks — US Stocks
 
 A React + Material UI web app (works on desktop and mobile, installable as a
-home-screen PWA) that scans 48 liquid US large-cap stocks and ranks the best
-**buy candidates** and **sell / avoid candidates** for the current week — each
-with a backtested **prediction rate** showing how often that stock's setup
-called the next week correctly over the past 2 years. The app **auto-updates
-from the API every 5 minutes** (live countdown chip in the UI) and has a
-light/dark theme toggle.
+home-screen PWA) that scans 48 liquid US large-cap stocks with a **pooled,
+walk-forward-validated model**. For each stock it shows a **calibrated
+probability of being up over the next month**, a **reliable expected-range /
+risk read**, and a **risk-adjusted conviction rank**. The app **auto-updates
+every 5 minutes** and has a light/dark theme toggle.
 
-> ⚠️ **Not financial advice.** Prediction rates are historical backtest hit
-> rates — past performance does not guarantee future results. Signals look only
-> at price/volume technicals and ignore news, earnings, and fundamentals.
+> ⚠️ **Not financial advice, and deliberately honest about its limits.** An
+> out-of-sample study baked into this app shows that predicting the *direction*
+> of a single large-cap one month out barely beats assuming the market drifts
+> up (~53% vs ~53%). What *is* reliably predictable is **volatility / risk**
+> (out-of-sample R² ≈ 0.22), so the app leads with the risk read and presents
+> the directional "lean" as low-confidence. Past performance never guarantees
+> future results.
+
+## Why it works this way (the honest part)
+
+Earlier versions reported a per-stock "prediction rate" of ~55%, which looked
+like edge but was a **selection artifact**: gating stocks on their in-sample
+hit rate and then reporting that same number. A proper holdout test exposed it —
+stocks selected on the first ~4 years scored **42%** (worse than a coin flip)
+on the held-out final year, with a **negative** persistence correlation. A
+fancier classifier cannot manufacture directional edge that isn't there at this
+horizon. So the engine was rebuilt to (a) predict what's actually predictable
+(risk), (b) show direction as a calibrated probability next to the market base
+rate, and (c) display its own true out-of-sample accuracy so you can see how
+much to trust each number.
 
 ## Run it
 
@@ -39,58 +55,61 @@ Then open **http://localhost:3000**.
   informational — not a religious ruling**; verify individual stocks with a
   screening service such as Zoya or Musaffa. Your choice is remembered on the
   device.
-- **This week at a glance** — market breadth (bullish/bearish/mixed), counts of
-  buy/sell/hold signals, average weekly move, average prediction rate, and the
-  strongest/weakest names.
-- **Buy candidates** / **Sell-avoid** cards — price, sparkline, RSI, momentum,
-  the reasons behind the call, and a **prediction rate** bar with a
-  plain-English summary (e.g. "this setup called the next week right 62% of the
-  time over the past 2 years (60 signals)"). ≥60% = high confidence,
-  50–59% = moderate, <50% = low.
-- **Full table** of all 48 stocks with weekly/monthly change, RSI, prediction
-  rate, and BUY/HOLD/SELL signal.
+- **How much to trust this** — a reliability card showing the model's *real*
+  held-out-year direction accuracy vs the market base rate (≈ tied, flagged as
+  "no proven edge"), the volatility-forecast R² (reliable), and the Brier score.
+- **This week at a glance** — S&P 500 regime (risk-on/off), counts of buy/sell
+  leans and neutrals, and average expected 1-month range.
+- **Buy / Sell lean cards** — price, sparkline, RSI, a **chance-up probability**
+  bar (with the neutral-50% marker) shown next to the base rate, the **expected
+  ±range** and **risk tier**, an honest one-line read, and the top model
+  factors behind the lean.
+- **Full table** of all 48 stocks: chance-up, expected range, risk tier, and
+  lean, ranked by risk-adjusted conviction.
 
 ## How the decision engine works
 
-For each stock the server pulls **~5 years of daily bars** and evaluates an
-**ensemble of 12 sub-signals**, each voting up / down / no-opinion for the
-coming week:
+The server pulls **~5 years of daily bars** for every stock plus the S&P 500
+(SPY) and builds **13 continuous technical features** per day: 1-week / 1-month
+/ 3-month momentum, RSI-14, RSI-2, MACD histogram, distance from the 20- and
+50-day averages, Bollinger-band position, relative strength vs SPY, market
+regime (SPY vs its 200-day average), volatility, and volume-vs-average.
 
-trend structure (20d/50d averages) · 1-month momentum · 1-week momentum ·
-RSI strength zone · RSI extremes · RSI-2 dip/spike reversion · MACD ·
-Bollinger-band reversion · relative strength vs S&P 500 · overall market
-regime (SPY vs its 200-day average) · volume confirmation · 20-day
-breakout/breakdown.
+**Direction — pooled logistic regression.** A single logistic model is trained
+across *all* stocks (≈48× more data than a per-stock fit, which is the main
+driver of generalization), with standardized features and L2 regularization.
+It outputs a **calibrated probability** the stock is higher in ~1 month. There
+is **no selection gate** — that was removed because it overfit (see above). A
+"lean" is shown only when the probability clears 57% (up) or 47% (down); most
+stocks sit near even odds, which is the honest normal state.
 
-**Walk-forward learning (no lookahead):** history is replayed day by day.
-Each sub-signal's hit rate *on that particular stock* is tracked as the replay
-progresses, and votes are combined weighted by each signal's proven edge so
-far — so by today, the model has learned which signals actually work for each
-symbol. The composite verdict is sampled weekly along the way, giving each
-stock an honest backtest of the exact rule the app uses live.
+**Reliability — a real train/holdout split, every refresh.** The final ~12
+months are held out; the model trains only on earlier data and is scored on the
+holdout. Those true out-of-sample numbers — direction accuracy vs base rate,
+Brier score, and the volatility-forecast R² — are shown in the app's "How much
+to trust this" card. Nothing shown to the user is an in-sample number.
 
-**Reported per stock:** prediction rate (backtest hit rate) with a **95%
-Wilson confidence interval**, sample count, and **expectancy** (average %
-return per signaled week — a hit rate means little if wins are small and
-losses big).
+**Risk / expected range — the reliable output.** Expected ±move over the
+horizon comes from recent realized daily-return volatility scaled by √horizon;
+each stock gets a cross-sectional **Low / Medium / High** risk tier. This is
+the trustworthy part (out-of-sample vol correlation ≈ 0.47).
 
-**Decision gate:** a live BUY/SELL is only surfaced when that stock's own
-backtest shows hit rate ≥ 52% *and* positive expectancy. Everything else is
-HOLD — fewer picks, but each one validated. Picks are ranked by validated
-edge (rate + expectancy, tempered by sample size) rather than raw signal
-strength, and each card lists the strongest contributing signals with their
-per-stock track record (e.g. "Relative strength vs S&P 500 — right 58% of
-892 past calls on this stock").
+**Conviction & explanations.** Cards are ranked by risk-adjusted conviction,
+`(probability − base rate) / expected volatility`. Each card's "top factors"
+are the standardized logistic **feature contributions** (weight × value) for
+that stock today — a faithful readout of what actually drove the number.
 
 ## Architecture
 
 - `server.js` — zero-dependency Node server: fetches Yahoo Finance data (no API
-  key), runs the walk-forward ensemble + backtests, serves `/api/screen` and
-  the built React app from `dist/`. Results cached 5 min.
+  key), builds features, trains the pooled logistic model (twice: past-only for
+  honest metrics, all-data for live predictions) + volatility forecast, serves
+  `/api/screen` and the built React app from `dist/`. Results cached 5 min.
 - `src/` — React app (Vite + Material UI): `App.jsx`, `components/`
-  (SummaryCard, StockCard, Sparkline, StockTable), `theme.js` (MUI light/dark
-  themes — the header moon/sun button toggles them, defaulting to the system
-  preference and remembered per device), `format.js`, `summary.js`.
+  (ModelReliabilityCard, SummaryCard, StockCard, Sparkline, StockTable),
+  `theme.js` (MUI light/dark themes — the header moon/sun button toggles them,
+  defaulting to the system preference and remembered per device), `format.js`,
+  `summary.js`.
 - `public/` — PWA manifest and icons (copied into `dist/` at build).
 
 ## Customize
@@ -99,3 +118,5 @@ per-stock track record (e.g. "Relative strength vs S&P 500 — right 58% of
 - **Refresh interval:** `CACHE_TTL_MS` in `server.js` (server cache) and
   `AUTO_REFRESH_SECONDS` in `src/App.jsx` (client polling) — both 5 minutes.
 - **Port:** `PORT=8080 node server.js`.
+- **Horizon & lean thresholds:** `HORIZON`, `LEAN_BUY_PROB`, `LEAN_SELL_PROB`
+  in `server.js`.

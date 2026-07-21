@@ -19,6 +19,7 @@ import LightModeIcon from "@mui/icons-material/LightMode";
 import ShowChartIcon from "@mui/icons-material/ShowChart";
 import CircleIcon from "@mui/icons-material/Circle";
 import SummaryCard from "./components/SummaryCard.jsx";
+import ModelReliabilityCard from "./components/ModelReliabilityCard.jsx";
 import StockCard from "./components/StockCard.jsx";
 import StockTable from "./components/StockTable.jsx";
 import { buildSummary } from "./summary.js";
@@ -29,9 +30,7 @@ const AUTO_REFRESH_SECONDS = 5 * 60;
 function initialMode() {
   const saved = localStorage.getItem("theme");
   if (saved === "light" || saved === "dark") return saved;
-  return window.matchMedia("(prefers-color-scheme: dark)").matches
-    ? "dark"
-    : "light";
+  return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
 }
 
 function SectionTitle({ color, children }) {
@@ -50,9 +49,7 @@ export default function App() {
   const [refreshing, setRefreshing] = useState(false);
   const [nextIn, setNextIn] = useState(AUTO_REFRESH_SECONDS);
   const [mode, setMode] = useState(initialMode);
-  const [shariahOnly, setShariahOnly] = useState(
-    () => localStorage.getItem("shariahOnly") === "1"
-  );
+  const [shariahOnly, setShariahOnly] = useState(() => localStorage.getItem("shariahOnly") === "1");
   const loadingRef = useRef(false);
 
   const theme = useMemo(() => getTheme(mode), [mode]);
@@ -70,7 +67,6 @@ export default function App() {
     setShariahOnly(on);
   };
 
-  /** background=true refreshes silently, keeping current data on screen. */
   const load = useCallback(async (background = false) => {
     if (loadingRef.current) return;
     loadingRef.current = true;
@@ -95,7 +91,6 @@ export default function App() {
     load();
   }, [load]);
 
-  // Countdown tick: auto-refresh from the API when it reaches zero.
   useEffect(() => {
     const id = setInterval(() => {
       setNextIn((s) => {
@@ -111,15 +106,11 @@ export default function App() {
 
   const countdown = `${Math.floor(nextIn / 60)}:${String(nextIn % 60).padStart(2, "0")}`;
 
-  const visible = data
-    ? shariahOnly
-      ? data.stocks.filter((s) => s.shariah)
-      : data.stocks
-    : [];
+  const visible = data ? (shariahOnly ? data.stocks.filter((s) => s.shariah) : data.stocks) : [];
   const summary = data ? buildSummary(visible) : null;
-  const byRank = (a, b) => (b.rank ?? 0) - (a.rank ?? 0);
-  const buys = visible.filter((s) => s.verdict === "BUY").sort(byRank).slice(0, 5);
-  const sells = visible.filter((s) => s.verdict === "SELL").sort(byRank).slice(0, 5);
+  const byConv = (a, b) => Math.abs(b.conviction) - Math.abs(a.conviction);
+  const buys = visible.filter((s) => s.verdict === "BUY").sort(byConv).slice(0, 5);
+  const sells = visible.filter((s) => s.verdict === "SELL").sort(byConv).slice(0, 5);
 
   return (
     <ThemeProvider theme={theme}>
@@ -132,8 +123,7 @@ export default function App() {
           zIndex: 10,
           backdropFilter: "blur(14px)",
           WebkitBackdropFilter: "blur(14px)",
-          bgcolor:
-            mode === "light" ? "rgba(249,249,247,0.82)" : "rgba(13,13,13,0.82)",
+          bgcolor: mode === "light" ? "rgba(249,249,247,0.82)" : "rgba(13,13,13,0.82)",
           borderBottom: 1,
           borderColor: "divider",
         }}
@@ -157,36 +147,23 @@ export default function App() {
               </Typography>
               <Typography sx={{ fontSize: "0.75rem", color: "text.secondary", mt: 0.2 }}>
                 {data
-                  ? `Updated ${new Date(data.generatedAt).toLocaleTimeString()} · ${
-                      visible.length
-                    } stocks${shariahOnly ? " (Shariah)" : ""}`
+                  ? `Updated ${new Date(data.generatedAt).toLocaleTimeString()} · ${visible.length} stocks${shariahOnly ? " (Shariah)" : ""}`
                   : loading
                   ? "Scanning US stocks…"
                   : "Update failed"}
               </Typography>
             </Box>
             <Stack direction="row" spacing={0.5} alignItems="center">
-              <IconButton
-                onClick={toggleMode}
-                aria-label={`Switch to ${mode === "light" ? "dark" : "light"} theme`}
-              >
+              <IconButton onClick={toggleMode} aria-label={`Switch to ${mode === "light" ? "dark" : "light"} theme`}>
                 {mode === "light" ? <DarkModeIcon /> : <LightModeIcon />}
               </IconButton>
-              <Button
-                variant="outlined"
-                size="small"
-                startIcon={<RefreshIcon />}
-                onClick={() => load(false)}
-                disabled={loading || refreshing}
-              >
+              <Button variant="outlined" size="small" startIcon={<RefreshIcon />} onClick={() => load(false)} disabled={loading || refreshing}>
                 Refresh
               </Button>
             </Stack>
           </Box>
         </Container>
-        {refreshing && (
-          <LinearProgress sx={{ height: 2, position: "absolute", bottom: 0, left: 0, right: 0 }} />
-        )}
+        {refreshing && <LinearProgress sx={{ height: 2, position: "absolute", bottom: 0, left: 0, right: 0 }} />}
       </Box>
 
       <Container maxWidth="sm" sx={{ py: 2 }}>
@@ -199,10 +176,7 @@ export default function App() {
                   fontSize: 9,
                   color: "#0ca30c !important",
                   animation: "pulse 2s ease-in-out infinite",
-                  "@keyframes pulse": {
-                    "0%, 100%": { opacity: 1 },
-                    "50%": { opacity: 0.35 },
-                  },
+                  "@keyframes pulse": { "0%, 100%": { opacity: 1 }, "50%": { opacity: 0.35 } },
                 }}
               />
             }
@@ -210,100 +184,76 @@ export default function App() {
             variant="outlined"
             sx={{ fontSize: "0.7rem" }}
           />
+          {data && (
+            <Chip size="small" label={data.horizonLabel + " horizon"} variant="outlined" sx={{ fontSize: "0.7rem" }} />
+          )}
         </Stack>
 
         <Alert severity="warning" variant="outlined" sx={{ mt: 1.5, fontSize: "0.75rem" }}>
-          Educational tool, <b>not financial advice</b>. Prediction rates are
-          historical backtest hit rates — past performance does not guarantee
-          future results. Signals ignore news, earnings, and fundamentals.
+          Educational tool, <b>not financial advice</b>. Honest finding: one-month
+          <b> direction</b> of a single stock is barely predictable — the model ties the
+          market's drift. What's reliable is the <b>risk / expected-range</b> read. Lean on
+          that; treat the buy/sell arrows lightly.
         </Alert>
 
         <Paper
           variant="outlined"
-          sx={{
-            mt: 1,
-            px: 1.5,
-            py: 1,
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "space-between",
-            gap: 1.5,
-          }}
+          sx={{ mt: 1, px: 1.5, py: 1, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 1.5 }}
         >
           <Box>
-            <Typography sx={{ fontSize: "0.85rem", fontWeight: 600 }}>
-              ☪ Shariah-compliant only
-            </Typography>
+            <Typography sx={{ fontSize: "0.85rem", fontWeight: 600 }}>☪ Shariah-compliant only</Typography>
             <Typography sx={{ fontSize: "0.68rem", color: "text.secondary" }}>
-              approximate screening — not a religious ruling; verify with a
-              service like Zoya or Musaffa
+              approximate screening — not a religious ruling; verify with a service like Zoya or Musaffa
             </Typography>
           </Box>
-          <Switch
-            checked={shariahOnly}
-            onChange={toggleShariah}
-            color="success"
-            inputProps={{ "aria-label": "Show Shariah-compliant stocks only" }}
-          />
+          <Switch checked={shariahOnly} onChange={toggleShariah} color="success" inputProps={{ "aria-label": "Show Shariah-compliant stocks only" }} />
         </Paper>
 
         {loading && (
           <Box sx={{ textAlign: "center", py: 6, color: "text.secondary" }}>
             <CircularProgress size={28} sx={{ mb: 1.5 }} />
-            <Typography sx={{ fontSize: "0.9rem" }}>
-              Fetching live market data &amp; running backtests…
-            </Typography>
+            <Typography sx={{ fontSize: "0.9rem" }}>Fetching market data, training model &amp; validating…</Typography>
           </Box>
         )}
 
         {error && !loading && (
           <Alert severity="error" sx={{ mt: 2 }}>
-            Could not load market data ({error}). Check your internet
-            connection and try again.
+            Could not load market data ({error}). Check your internet connection and try again.
           </Alert>
         )}
 
         {data && !loading && (
           <>
+            <ModelReliabilityCard model={data.model} />
             <SummaryCard summary={summary} scanned={visible.length} market={data.market} />
 
-            <SectionTitle color="success.main">
-              Buy candidates this week
-            </SectionTitle>
+            <SectionTitle color="success.main">Buy leans this week</SectionTitle>
             {buys.length > 0 ? (
-              buys.map((s) => <StockCard key={s.symbol} stock={s} side="buy" />)
+              buys.map((s) => <StockCard key={s.symbol} stock={s} model={data.model} />)
             ) : (
               <Paper variant="outlined" sx={{ p: 2, color: "text.secondary", fontSize: "0.85rem" }}>
-                No stock passes the reliability bar for buys right now
-                (historical hit rate ≥ 52% with positive edge). Waiting is a
-                position too.
+                No upward leans clear the 57% probability line right now — most stocks sit near
+                even odds, which is the honest normal state.
               </Paper>
             )}
 
-            <SectionTitle color="error.main">
-              Sell / avoid this week
-            </SectionTitle>
+            <SectionTitle color="error.main">Sell leans this week</SectionTitle>
             {sells.length > 0 ? (
-              sells.map((s) => <StockCard key={s.symbol} stock={s} side="sell" />)
+              sells.map((s) => <StockCard key={s.symbol} stock={s} model={data.model} />)
             ) : (
               <Paper variant="outlined" sx={{ p: 2, color: "text.secondary", fontSize: "0.85rem" }}>
-                No stock passes the reliability bar for sells right now.
+                No downward leans right now.
               </Paper>
             )}
 
-            <SectionTitle>
-              All {visible.length}
-              {shariahOnly ? " Shariah-compliant" : ""} stocks
-            </SectionTitle>
+            <SectionTitle>All {visible.length}{shariahOnly ? " Shariah-compliant" : ""} stocks (by conviction)</SectionTitle>
             <StockTable stocks={visible} showShariah={!shariahOnly} />
           </>
         )}
 
-        <Typography
-          sx={{ fontSize: "0.7rem", color: "text.secondary", textAlign: "center", py: 3 }}
-        >
-          Data: Yahoo Finance · Auto-updates every 5 minutes · Built with
-          Claude Code (Fable)
+        <Typography sx={{ fontSize: "0.7rem", color: "text.secondary", textAlign: "center", py: 3 }}>
+          Data: Yahoo Finance · Model retrained &amp; validated every refresh · Auto-updates
+          every 5 minutes · Built with Claude Code (Fable)
         </Typography>
       </Container>
     </ThemeProvider>
