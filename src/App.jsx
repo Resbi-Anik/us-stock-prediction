@@ -8,7 +8,6 @@ import IconButton from "@mui/material/IconButton";
 import Alert from "@mui/material/Alert";
 import Paper from "@mui/material/Paper";
 import Switch from "@mui/material/Switch";
-import Chip from "@mui/material/Chip";
 import CircularProgress from "@mui/material/CircularProgress";
 import LinearProgress from "@mui/material/LinearProgress";
 import Stack from "@mui/material/Stack";
@@ -31,17 +30,28 @@ const MAXW = 1360;
 function initialMode() {
   const saved = localStorage.getItem("theme");
   if (saved === "light" || saved === "dark") return saved;
-  return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+  return window.matchMedia("(prefers-color-scheme: dark)").matches
+    ? "dark"
+    : "light";
 }
 
 function SectionTitle({ icon, color, children, sub }) {
   return (
     <Box sx={{ mt: 1, mb: 1.4 }}>
-      <Typography variant="h2" sx={{ display: "flex", alignItems: "center", gap: 0.8 }}>
+      <Typography
+        variant="h2"
+        sx={{ display: "flex", alignItems: "center", gap: 0.8 }}
+      >
         {icon}
         {children}
       </Typography>
-      {sub && <Typography sx={{ fontSize: "0.72rem", color: "text.secondary", mt: 0.2 }}>{sub}</Typography>}
+      {sub && (
+        <Typography
+          sx={{ fontSize: "0.72rem", color: "text.secondary", mt: 0.2 }}
+        >
+          {sub}
+        </Typography>
+      )}
     </Box>
   );
 }
@@ -63,7 +73,9 @@ export default function App() {
   const [refreshing, setRefreshing] = useState(false);
   const [nextIn, setNextIn] = useState(AUTO_REFRESH_SECONDS);
   const [mode, setMode] = useState(initialMode);
-  const [shariahOnly, setShariahOnly] = useState(() => localStorage.getItem("shariahOnly") === "1");
+  const [shariahOnly, setShariahOnly] = useState(
+    () => localStorage.getItem("shariahOnly") === "1",
+  );
   const loadingRef = useRef(false);
 
   const theme = useMemo(() => getTheme(mode), [mode]);
@@ -122,15 +134,24 @@ export default function App() {
 
   const ranked = useMemo(() => {
     if (!data) return [];
-    const visible = shariahOnly ? data.stocks.filter((s) => s.shariah) : data.stocks;
+    const visible = shariahOnly
+      ? data.stocks.filter((s) => s.shariah)
+      : data.stocks;
     return rankAndTier(visible);
   }, [data, shariahOnly]);
 
   const summary = data ? buildSummary(ranked) : null;
   const buys = ranked.filter((s) => s.verdict === "BUY");
-  const sells = ranked.filter((s) => s.verdict === "SELL").sort((a, b) => a.strengthScore - b.strengthScore);
+  const sells = ranked
+    .filter((s) => s.verdict === "SELL")
+    .sort((a, b) => a.strengthScore - b.strengthScore);
 
-  const headerInner = { maxWidth: MAXW, mx: "auto", px: { xs: 2, md: 3 }, width: "100%" };
+  const headerInner = {
+    maxWidth: MAXW,
+    mx: "auto",
+    px: { xs: 2, md: 3 },
+    width: "100%",
+  };
 
   return (
     <ThemeProvider theme={theme}>
@@ -145,58 +166,100 @@ export default function App() {
           zIndex: 20,
           backdropFilter: "blur(14px)",
           WebkitBackdropFilter: "blur(14px)",
-          bgcolor: mode === "light" ? "rgba(249,249,247,0.82)" : "rgba(13,13,13,0.82)",
+          bgcolor:
+            mode === "light" ? "rgba(249,249,247,0.82)" : "rgba(13,13,13,0.82)",
           borderBottom: 1,
           borderColor: "divider",
         }}
       >
-        <Box sx={{ ...headerInner, py: 1.2, display: "flex", justifyContent: "space-between", alignItems: "center", gap: 1 }}>
+        <Box
+          sx={{
+            ...headerInner,
+            py: 1.2,
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
+            gap: 1,
+          }}
+        >
           <Box>
-            <Typography variant="h1" sx={{ display: "flex", alignItems: "center", gap: 0.8 }}>
+            <Typography
+              variant="h1"
+              sx={{ display: "flex", alignItems: "center", gap: 0.8 }}
+            >
               <ShowChartIcon color="primary" />
               <Box
                 component="span"
-                sx={{ background: BRAND_GRADIENT, WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent", backgroundClip: "text" }}
+                sx={{
+                  background: BRAND_GRADIENT,
+                  WebkitBackgroundClip: "text",
+                  WebkitTextFillColor: "transparent",
+                  backgroundClip: "text",
+                }}
               >
                 Weekly Picks
               </Box>
             </Typography>
-            <Typography sx={{ fontSize: "0.75rem", color: "text.secondary", mt: 0.2 }}>
+            <Typography
+              sx={{ fontSize: "0.75rem", color: "text.secondary", mt: 0.2 }}
+            >
               {data
                 ? `Updated ${new Date(data.generatedAt).toLocaleTimeString()} · ${ranked.length} stocks ranked${shariahOnly ? " (Shariah)" : ""}`
                 : loading
-                ? "Scanning US stocks…"
-                : "Update failed"}
+                  ? "Scanning US stocks…"
+                  : "Update failed"}
             </Typography>
           </Box>
           <Stack direction="row" spacing={1} alignItems="center">
-            <Chip
-              size="small"
-              label={
-                <Box sx={{ display: "flex", alignItems: "center", gap: 0.6 }}>
-                  <Box
-                    sx={{
-                      width: 7,
-                      height: 7,
-                      borderRadius: "50%",
-                      flexShrink: 0,
-                      bgcolor: "#0ca30c",
-                      animation: "pulse 2s ease-in-out infinite",
-                      "@keyframes pulse": { "0%, 100%": { opacity: 1 }, "50%": { opacity: 0.3 } },
-                    }}
-                  />
-                  <Box component="span" sx={{ fontVariantNumeric: "tabular-nums" }}>
-                    {refreshing ? "Updating…" : `Live · ${countdown}`}
-                  </Box>
-                </Box>
-              }
-              variant="outlined"
-              sx={{ fontSize: "0.7rem", display: { xs: "none", sm: "inline-flex" } }}
-            />
-            <IconButton onClick={toggleMode} aria-label={`Switch to ${mode === "light" ? "dark" : "light"} theme`}>
+            <Box
+              sx={{
+                display: { xs: "none", sm: "inline-flex" },
+                alignItems: "center",
+                gap: 0.7,
+                height: 26,
+                px: 1.1,
+                borderRadius: 999,
+                border: 1,
+                borderColor: "divider",
+                fontSize: "0.7rem",
+                fontWeight: 500,
+                lineHeight: 1,
+                color: "text.primary",
+                fontVariantNumeric: "tabular-nums",
+                whiteSpace: "nowrap",
+              }}
+            >
+              <Box
+                sx={{
+                  width: 7,
+                  height: 7,
+                  borderRadius: "50%",
+                  flexShrink: 0,
+                  bgcolor: "#0ca30c",
+                  animation: "pulse 2s ease-in-out infinite",
+                  "@keyframes pulse": {
+                    "0%, 100%": { opacity: 1 },
+                    "50%": { opacity: 0.3 },
+                  },
+                }}
+              />
+              <Box component="span" sx={{ lineHeight: 1 }}>
+                {refreshing ? "Updating…" : `Live · ${countdown}`}
+              </Box>
+            </Box>
+            <IconButton
+              onClick={toggleMode}
+              aria-label={`Switch to ${mode === "light" ? "dark" : "light"} theme`}
+            >
               {mode === "light" ? <DarkModeIcon /> : <LightModeIcon />}
             </IconButton>
-            <Button variant="outlined" size="small" startIcon={<RefreshIcon />} onClick={() => load(false)} disabled={loading || refreshing}>
+            <Button
+              variant="outlined"
+              size="small"
+              startIcon={<RefreshIcon />}
+              onClick={() => load(false)}
+              disabled={loading || refreshing}
+            >
               Refresh
             </Button>
           </Stack>
@@ -205,28 +268,42 @@ export default function App() {
       </Box>
 
       <Box sx={{ ...headerInner, py: 2 }}>
-        <Alert severity="warning" variant="outlined" sx={{ fontSize: "0.76rem", mb: 2 }}>
+        <Alert
+          severity="warning"
+          variant="outlined"
+          sx={{ fontSize: "0.76rem", mb: 2 }}
+        >
           Educational tool, <b>not financial advice</b>. This ranks stocks by{" "}
-          <b>relative strength</b> — a signal that held up out-of-sample — rather than claiming to
-          call absolute up/down (which barely beats a coin flip). Size positions by the risk tier.
+          <b>relative strength</b> — a signal that held up out-of-sample —
+          rather than claiming to call absolute up/down (which barely beats a
+          coin flip). Size positions by the risk tier.
         </Alert>
 
         {loading && (
           <Box sx={{ textAlign: "center", py: 8, color: "text.secondary" }}>
             <CircularProgress size={30} sx={{ mb: 1.5 }} />
-            <Typography>Fetching market data, training the model &amp; validating out-of-sample…</Typography>
+            <Typography>
+              Fetching market data, training the model &amp; validating
+              out-of-sample…
+            </Typography>
           </Box>
         )}
 
         {error && !loading && (
-          <Alert severity="error">Could not load market data ({error}). Check your connection and retry.</Alert>
+          <Alert severity="error">
+            Could not load market data ({error}). Check your connection and
+            retry.
+          </Alert>
         )}
 
         {data && !loading && (
           <Box
             sx={{
               display: "grid",
-              gridTemplateColumns: { xs: "minmax(0, 1fr)", lg: "minmax(300px, 350px) minmax(0, 1fr)" },
+              gridTemplateColumns: {
+                xs: "minmax(0, 1fr)",
+                lg: "minmax(300px, 350px) minmax(0, 1fr)",
+              },
               gap: { xs: 2, lg: 3 },
               alignItems: "start",
             }}
@@ -242,23 +319,53 @@ export default function App() {
                 top: { lg: 84 },
               }}
             >
-              <Paper variant="outlined" sx={{ px: 1.5, py: 1, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 1.5 }}>
+              <Paper
+                variant="outlined"
+                sx={{
+                  px: 1.5,
+                  py: 1,
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  gap: 1.5,
+                }}
+              >
                 <Box>
-                  <Typography sx={{ fontSize: "0.85rem", fontWeight: 600 }}>☪ Shariah-compliant only</Typography>
-                  <Typography sx={{ fontSize: "0.66rem", color: "text.secondary" }}>
+                  <Typography sx={{ fontSize: "0.85rem", fontWeight: 600 }}>
+                    ☪ Shariah-compliant only
+                  </Typography>
+                  <Typography
+                    sx={{ fontSize: "0.66rem", color: "text.secondary" }}
+                  >
                     approximate — verify with Zoya or Musaffa
                   </Typography>
                 </Box>
-                <Switch checked={shariahOnly} onChange={toggleShariah} color="success" inputProps={{ "aria-label": "Show Shariah-compliant stocks only" }} />
+                <Switch
+                  checked={shariahOnly}
+                  onChange={toggleShariah}
+                  color="success"
+                  inputProps={{
+                    "aria-label": "Show Shariah-compliant stocks only",
+                  }}
+                />
               </Paper>
               <ModelReliabilityCard model={data.model} />
-              <SummaryCard summary={summary} scanned={ranked.length} market={data.market} />
+              <SummaryCard
+                summary={summary}
+                scanned={ranked.length}
+                market={data.market}
+              />
             </Box>
 
             {/* Main content */}
             <Box sx={{ minWidth: 0 }}>
               <SectionTitle
-                icon={<ArrowUpwardIcon fontSize="small" sx={{ color: "success.main" }} />}
+                icon={
+                  <ArrowUpwardIcon
+                    fontSize="small"
+                    sx={{ color: "success.main" }}
+                  />
+                }
                 sub={`Strongest relative strength this ${data.horizonLabel.includes("month") ? "month" : "period"} — top ${buys.length} of ${ranked.length}. Ranked by the validated model.`}
               >
                 Top ranked
@@ -270,12 +377,22 @@ export default function App() {
                   ))}
                 </Box>
               ) : (
-                <Paper variant="outlined" sx={{ p: 2, color: "text.secondary", fontSize: "0.85rem" }}>Nothing to show.</Paper>
+                <Paper
+                  variant="outlined"
+                  sx={{ p: 2, color: "text.secondary", fontSize: "0.85rem" }}
+                >
+                  Nothing to show.
+                </Paper>
               )}
 
               <Box sx={{ mt: 3 }}>
                 <SectionTitle
-                  icon={<ArrowDownwardIcon fontSize="small" sx={{ color: "error.main" }} />}
+                  icon={
+                    <ArrowDownwardIcon
+                      fontSize="small"
+                      sx={{ color: "error.main" }}
+                    />
+                  }
                   sub={`Weakest relative strength — bottom ${sells.length}. Historically these lagged the top group.`}
                 >
                   Bottom ranked (avoid)
@@ -287,13 +404,19 @@ export default function App() {
                     ))}
                   </Box>
                 ) : (
-                  <Paper variant="outlined" sx={{ p: 2, color: "text.secondary", fontSize: "0.85rem" }}>Nothing to show.</Paper>
+                  <Paper
+                    variant="outlined"
+                    sx={{ p: 2, color: "text.secondary", fontSize: "0.85rem" }}
+                  >
+                    Nothing to show.
+                  </Paper>
                 )}
               </Box>
 
               <Box sx={{ mt: 3 }}>
                 <SectionTitle sub="Full ranking, strongest to weakest.">
-                  All {ranked.length}{shariahOnly ? " Shariah-compliant" : ""} stocks
+                  All {ranked.length}
+                  {shariahOnly ? " Shariah-compliant" : ""} stocks
                 </SectionTitle>
                 <StockTable stocks={ranked} showShariah={!shariahOnly} />
               </Box>
@@ -301,9 +424,16 @@ export default function App() {
           </Box>
         )}
 
-        <Typography sx={{ fontSize: "0.7rem", color: "text.secondary", textAlign: "center", py: 3 }}>
-          Data: Yahoo Finance · Model retrained &amp; validated every refresh · Auto-updates every 5
-          minutes · Built with Claude Code (Fable)
+        <Typography
+          sx={{
+            fontSize: "0.7rem",
+            color: "text.secondary",
+            textAlign: "center",
+            py: 3,
+          }}
+        >
+          Data: Yahoo Finance · Model retrained &amp; validated every refresh ·
+          Auto-updates every 5 minutes ·
         </Typography>
       </Box>
     </ThemeProvider>
