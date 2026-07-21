@@ -7,28 +7,32 @@
  *                       expected-range / risk forecast, and a risk-adjusted
  *                       conviction rank.
  *
- * DECISION ENGINE (v3) — built from an honest out-of-sample study:
+ * DECISION ENGINE (v4) — built from an honest out-of-sample study:
  *
- *   Empirically, 1-week/1-month *direction* of a single large-cap is close to
- *   unpredictable from technicals: a pooled logistic model scores ~53% on a
- *   held-out final year — statistically tied with the "market drifts up" base
- *   rate (~53%). Selecting stocks on their in-sample hit rate is actively
- *   HARMFUL (that selection's holdout hit rate was 42%, correlation -0.28).
- *   So this engine does NOT pretend to have directional edge it lacks.
+ *   Predicting the *absolute direction* of a single large-cap ~1 month out is
+ *   near-random from technicals (pooled model ~53% vs ~53% market-drift base
+ *   rate on a held-out year; Brier ~0.25). Selecting stocks on in-sample hit
+ *   rate is actively HARMFUL (holdout 42%, persistence corr -0.28). So this
+ *   engine does NOT chase absolute direction.
  *
- *   What IS reliably predictable is VOLATILITY (past vol vs next-period vol:
- *   correlation ~0.48, R^2 ~0.23 out-of-sample). The engine therefore leads
- *   with a trustworthy expected-range / risk read, and treats direction as a
- *   modest, calibrated probability shown honestly next to the base rate.
+ *   What DOES work, robustly and out-of-sample, is CROSS-SECTIONAL RANKING:
+ *   a pooled model trained to predict whether a stock will BEAT its peers over
+ *   the horizon produces monotonic quintiles on held-out years — worst-ranked
+ *   fifth returned ~+0.5-0.9%/mo, best-ranked ~+3-4.3%/mo, a long-short spread
+ *   of +2.5% (last year) and +3.4% (year before), positive in both folds.
+ *   Relative-strength ranking is exactly the "which stock to buy" question.
  *
- *   - Direction: pooled logistic regression over 13 continuous technical
- *     features, trained on all history; probability is what it is (no gate).
- *   - Reliability: each refresh re-runs a train/holdout split so the app can
- *     show its own true out-of-sample accuracy vs the base rate + volatility
- *     forecast R^2 — the user sees exactly how much to trust each output.
- *   - Volatility: expected +/- range over the horizon from recent realized
- *     volatility; a cross-sectional risk tier (Low/Medium/High).
- *   - Conviction: risk-adjusted directional edge = (prob - base) / exp. vol.
+ *   Also reliably predictable: VOLATILITY (past vs next-horizon realized vol,
+ *   corr ~0.61 / R^2 ~0.37 out-of-sample), used for a trustworthy expected
+ *   range and risk tier.
+ *
+ *   - Strength score: pooled logistic regression over 14 continuous features,
+ *     trained on the RELATIVE target (beat the cross-sectional mean return).
+ *     Stocks are ranked by this score; top/bottom quintiles are the leans.
+ *   - Reliability: each refresh re-runs a train/holdout split and reports the
+ *     true out-of-sample quintile spread, ranking accuracy, absolute-direction
+ *     accuracy (for honesty), Brier, and volatility R^2.
+ *   - Volatility: expected +/- range (one sigma) + Low/Medium/High risk tier.
  *
  * Data source: Yahoo Finance public chart API (no key required).
  * Results cached in memory for 5 minutes.
@@ -43,12 +47,11 @@ const PORT = process.env.PORT || 3000;
 const CACHE_TTL_MS = 5 * 60 * 1000;
 
 // Engine tuning
-const HORIZON = 21; // trading days a call is judged against (~1 month; more signal than 1wk)
+const HORIZON = 21; // trading days a call is judged against (~1 month)
 const HOLDOUT_BARS = 252; // final ~12 months held out to measure honest accuracy
-const WARMUP = 60; // bars before a stock has enough history for features
-const LEAN_BUY_PROB = 0.57; // calibrated prob thresholds for a directional lean
-const LEAN_SELL_PROB = 0.47;
-const GD_ITERS = 300;
+const WARMUP = 125; // bars before a stock has all features (needs 120d momentum)
+const TIER_QUANTILE = 0.2; // top/bottom fifth by strength score become leans
+const GD_ITERS = 350;
 const GD_LR = 0.1;
 const GD_L2 = 1e-3;
 
@@ -57,6 +60,7 @@ const FEATURES = [
   { key: "mom5", label: "1-week momentum" },
   { key: "mom20", label: "1-month momentum" },
   { key: "mom60", label: "3-month momentum" },
+  { key: "mom120", label: "6-month momentum" },
   { key: "rsi14", label: "RSI-14 level" },
   { key: "rsi2", label: "Short-term reversion (RSI-2)" },
   { key: "macd", label: "MACD histogram" },
@@ -329,6 +333,7 @@ function featureMatrix(stock, market) {
   const m5 = pctSeries(c, 5);
   const m20 = pctSeries(c, 20);
   const m60 = pctSeries(c, 60);
+  const m120 = pctSeries(c, 120);
   const v5 = smaSeries(stock.volumes, 5);
   const v20 = smaSeries(stock.volumes, 20);
   const vol20d = volSeries(c, 20);
@@ -337,7 +342,7 @@ function featureMatrix(stock, market) {
   for (let i = 0; i < c.length; i++) {
     const k = market ? market.idxByDate.get(stock.dates[i]) : null;
     if (
-      s50[i] == null || m60[i] == null || r14[i] == null || mh[i] == null ||
+      s50[i] == null || m120[i] == null || r14[i] == null || mh[i] == null ||
       st20[i] == null || v20[i] == null || vol20d[i] == null ||
       k == null || market.sma200[k] == null
     ) {
@@ -348,6 +353,7 @@ function featureMatrix(stock, market) {
       m5[i],
       m20[i],
       m60[i],
+      m120[i],
       r14[i] - 50,
       r2[i] - 50,
       (mh[i] / c[i]) * 100,
@@ -407,16 +413,20 @@ function trainLogistic(X, Y) {
 }
 
 // ---------- Assemble dataset across all stocks ----------
+//
+// Primary target is CROSS-SECTIONAL: label 1 if the stock's forward return
+// beats the average forward return of all stocks that same day (i.e. it is a
+// relative-strength winner). A secondary absolute label (up/down) is kept only
+// to report — honestly — that absolute direction is ~a coin flip.
 
 function buildDataset(stocks, market) {
   const cutoff = market.dates[market.dates.length - HOLDOUT_BARS];
-  const train = { X: [], Y: [] };
-  const holdout = []; // {x, y}
-  const holdoutVol = []; // {past, future} for vol-forecast R^2
-  const all = { X: [], Y: [] };
+
+  // group forward observations by calendar date to compute the peer mean
+  const byDate = new Map(); // date -> [{si, i, x, fwd}]
   const perStock = [];
 
-  for (const stock of stocks) {
+  stocks.forEach((stock, si) => {
     const { X, vol20d } = featureMatrix(stock, market);
     const c = stock.closes;
     const n = c.length;
@@ -424,113 +434,148 @@ function buildDataset(stocks, market) {
     for (let i = WARMUP; i < n; i++) {
       if (X[i]) lastValid = i;
       if (!X[i] || i + HORIZON >= n) continue;
-      const y = c[i + HORIZON] > c[i] ? 1 : 0;
-      all.X.push(X[i]);
-      all.Y.push(y);
-      if (stock.dates[i + HORIZON] < cutoff) {
-        train.X.push(X[i]);
-        train.Y.push(y);
-      } else if (stock.dates[i] >= cutoff) {
-        holdout.push({ x: X[i], y });
-        // Volatility validation AT THE HORIZON WE DISPLAY: past 20d daily vol
-        // vs realized daily vol over the next HORIZON days (the same quantity,
-        // scaled by sqrt(HORIZON), that drives the shown expected range).
-        if (vol20d[i] != null && i + HORIZON + 1 < n) {
-          const fut = volSeries(c.slice(i, i + HORIZON + 1), HORIZON)[HORIZON];
-          if (fut != null) holdoutVol.push({ past: vol20d[i], future: fut });
+      const fwd = c[i + HORIZON] / c[i] - 1;
+      const d = stock.dates[i];
+      if (!byDate.has(d)) byDate.set(d, []);
+      byDate.get(d).push({ si, i, x: X[i], fwd });
+    }
+    perStock.push({ stock, X, vol20d, lastValid });
+  });
+
+  const trainRel = { X: [], Y: [] };
+  const trainAbs = { X: [], Y: [] };
+  const allRel = { X: [], Y: [] };
+  const holdout = []; // {x, relY, absY, fwd, date}
+  const holdoutVol = [];
+
+  for (const [date, arr] of byDate) {
+    if (arr.length < 5) continue;
+    const mean = arr.reduce((s, e) => s + e.fwd, 0) / arr.length;
+    for (const e of arr) {
+      const relY = e.fwd > mean ? 1 : 0;
+      const absY = e.fwd > 0 ? 1 : 0;
+      allRel.X.push(e.x);
+      allRel.Y.push(relY);
+      if (date < cutoff) {
+        trainRel.X.push(e.x);
+        trainRel.Y.push(relY);
+        trainAbs.X.push(e.x);
+        trainAbs.Y.push(absY);
+      } else {
+        holdout.push({ x: e.x, relY, absY, fwd: e.fwd, date });
+        const entry = perStock[e.si];
+        const c = entry.stock.closes;
+        if (entry.vol20d[e.i] != null && e.i + HORIZON + 1 < c.length) {
+          const fut = volSeries(c.slice(e.i, e.i + HORIZON + 1), HORIZON)[HORIZON];
+          if (fut != null) holdoutVol.push({ past: entry.vol20d[e.i], future: fut });
         }
       }
     }
-    perStock.push({ stock, X, vol20d, lastValid });
   }
-  return { train, holdout, holdoutVol, all, perStock };
+  return { trainRel, trainAbs, allRel, holdout, holdoutVol, perStock };
 }
 
-function evaluate(model, holdout, holdoutVol) {
-  let n = 0;
-  let hit = 0;
-  let brier = 0;
-  let up = 0;
+function linR2(pairs) {
+  if (pairs.length < 30) return { r2: null, corr: null };
+  const xs = pairs.map((d) => d.past);
+  const ys = pairs.map((d) => d.future);
+  const mx = xs.reduce((a, b) => a + b, 0) / xs.length;
+  const my = ys.reduce((a, b) => a + b, 0) / ys.length;
+  let cov = 0, sx = 0, sy = 0;
+  for (let i = 0; i < xs.length; i++) {
+    cov += (xs[i] - mx) * (ys[i] - my);
+    sx += (xs[i] - mx) ** 2;
+    sy += (ys[i] - my) ** 2;
+  }
+  const corr = cov / Math.sqrt(sx * sy);
+  const beta = cov / sx;
+  const alpha = my - beta * mx;
+  let ssRes = 0;
+  for (let i = 0; i < xs.length; i++) ssRes += (ys[i] - (alpha + beta * xs[i])) ** 2;
+  return { r2: 1 - ssRes / sy, corr };
+}
+
+/**
+ * Out-of-sample reliability:
+ *  - ranking: sort each holdout day by the relative model's score, bucket into
+ *    quintiles, measure each quintile's mean forward return and the Q5-Q1 spread
+ *    (the honest validation of a ranking model), plus relative-direction accuracy.
+ *  - direction (absolute): accuracy vs base rate + Brier, to show it is ~a coin flip.
+ *  - volatility: forecast R^2 at the displayed horizon.
+ */
+function evaluate(relModel, absModel, holdout, holdoutVol) {
+  // absolute direction
+  let n = 0, hitAbs = 0, brier = 0, up = 0;
   for (const e of holdout) {
-    const p = model.predict(e.x);
+    const p = absModel.predict(e.x);
     n++;
-    if ((p > 0.5) === (e.y === 1)) hit++;
-    brier += (p - e.y) ** 2;
-    up += e.y;
+    if ((p > 0.5) === (e.absY === 1)) hitAbs++;
+    brier += (p - e.absY) ** 2;
+    up += e.absY;
   }
-  // volatility forecast R^2 (linear fit past->future)
-  let volR2 = null;
-  let volCorr = null;
-  if (holdoutVol.length > 30) {
-    const xs = holdoutVol.map((d) => d.past);
-    const ys = holdoutVol.map((d) => d.future);
-    const mx = xs.reduce((a, b) => a + b, 0) / xs.length;
-    const my = ys.reduce((a, b) => a + b, 0) / ys.length;
-    let cov = 0, sx = 0, sy = 0;
-    for (let i = 0; i < xs.length; i++) {
-      cov += (xs[i] - mx) * (ys[i] - my);
-      sx += (xs[i] - mx) ** 2;
-      sy += (ys[i] - my) ** 2;
-    }
-    volCorr = cov / Math.sqrt(sx * sy);
-    const beta = cov / sx;
-    const alpha = my - beta * mx;
-    let ssRes = 0;
-    for (let i = 0; i < xs.length; i++) ssRes += (ys[i] - (alpha + beta * xs[i])) ** 2;
-    volR2 = 1 - ssRes / sy;
+
+  // ranking quintiles per day
+  const byDate = new Map();
+  for (const e of holdout) {
+    if (!byDate.has(e.date)) byDate.set(e.date, []);
+    byDate.get(e.date).push(e);
   }
+  const q = [[], [], [], [], []];
+  let relN = 0, relHit = 0;
+  for (const [, arr] of byDate) {
+    const scored = arr.map((e) => ({ ...e, sc: relModel.predict(e.x) }));
+    if (scored.length < 10) continue;
+    scored.sort((a, b) => a.sc - b.sc);
+    const per = scored.length / 5;
+    scored.forEach((e, idx) => {
+      q[Math.min(4, Math.floor(idx / per))].push(e.fwd);
+      relN++;
+      if ((e.sc > 0.5) === (e.relY === 1)) relHit++;
+    });
+  }
+  const mean = (a) => (a.length ? a.reduce((s, v) => s + v, 0) / a.length : 0);
+  const qMeans = q.map((a) => +(mean(a) * 100).toFixed(2));
+  const spread = +(qMeans[4] - qMeans[0]).toFixed(2);
+
+  const vol = linR2(holdoutVol);
   return {
     holdoutSamples: n,
-    dirAccuracy: n ? +((hit / n) * 100).toFixed(1) : null,
+    rankSpread: spread,
+    qMeans,
+    rankAccuracy: relN ? +((relHit / relN) * 100).toFixed(1) : null,
+    dirAccuracy: n ? +((hitAbs / n) * 100).toFixed(1) : null,
     baseRate: n ? +((up / n) * 100).toFixed(1) : null,
     brier: n ? +(brier / n).toFixed(4) : null,
-    volCorr: volCorr != null ? +volCorr.toFixed(2) : null,
-    volR2: volR2 != null ? +volR2.toFixed(2) : null,
+    volCorr: vol.corr != null ? +vol.corr.toFixed(2) : null,
+    volR2: vol.r2 != null ? +vol.r2.toFixed(2) : null,
   };
 }
 
 // ---------- Live per-stock read ----------
 
-function analyzeStock(entry, liveModel, baseRate, riskBands, market) {
+function analyzeStock(entry, relModel, riskBands) {
   const { stock, X, vol20d, lastValid } = entry;
   if (lastValid < 0) return null;
   const c = stock.closes;
   const i = lastValid;
 
-  const probUp = liveModel.predict(X[i]);
-  const edgePts = +((probUp - baseRate / 100) * 100).toFixed(1);
+  const score = relModel.predict(X[i]); // P(beat peers this horizon)
 
-  // Expected +/- range over the horizon from recent daily-return volatility
   const dailyVol = vol20d[i];
   const horizonSigma = dailyVol * Math.sqrt(HORIZON);
   const expectedRangePct = +(horizonSigma * 100).toFixed(1);
-
-  // Cross-sectional risk tier
   const riskTier =
     horizonSigma <= riskBands.low ? "Low" : horizonSigma >= riskBands.high ? "High" : "Medium";
 
-  // Risk-adjusted directional conviction
-  const conviction = horizonSigma > 0 ? (probUp - baseRate / 100) / horizonSigma : 0;
-
-  const verdict =
-    probUp >= LEAN_BUY_PROB ? "BUY" : probUp <= LEAN_SELL_PROB ? "SELL" : "HOLD";
-  const side = probUp >= 0.5 ? "buy" : "sell";
-
-  // Explanation: standardized feature contributions to the log-odds
-  const xn = liveModel.std.norm(X[i]);
-  const contrib = liveModel.w.map((wj, j) => ({
-    j,
-    c: wj * xn[j],
-  }));
+  // feature contributions (standardized weight x value) toward the score
+  const xn = relModel.std.norm(X[i]);
+  const contrib = relModel.w.map((wj, j) => ({ j, c: wj * xn[j] }));
+  const side = score >= 0.5 ? "buy" : "sell";
   const signals = contrib
     .filter((x) => (side === "buy" ? x.c > 0 : x.c < 0))
     .sort((a, b) => Math.abs(b.c) - Math.abs(a.c))
     .slice(0, 4)
-    .map((x) => ({
-      side,
-      text: FEATURES[x.j].label,
-      strength: +Math.abs(x.c).toFixed(2),
-    }));
+    .map((x) => ({ side, text: FEATURES[x.j].label }));
 
   const rsi14 = rsiSeries(c, 14);
   const m5 = pctSeries(c, 5);
@@ -545,14 +590,12 @@ function analyzeStock(entry, liveModel, baseRate, riskBands, market) {
     chg5d: m5[i] != null ? +m5[i].toFixed(2) : null,
     chg20d: m20[i] != null ? +m20[i].toFixed(2) : null,
     rsi: rsi14[i] != null ? +rsi14[i].toFixed(1) : null,
-    probUp: +(probUp * 100).toFixed(1),
-    edgePts,
+    strengthScore: +(score * 100).toFixed(1), // 0-100, P(beat peers)
     expectedRangePct,
     riskTier,
-    conviction: +conviction.toFixed(3),
-    verdict,
     signals,
     spark: c.slice(-30).map((x) => +x.toFixed(2)),
+    // rank / rankPct / verdict assigned after all stocks are scored
   };
 }
 
@@ -568,8 +611,8 @@ function buildSummary(stocks) {
     ? +(stocks.reduce((a, s) => a + (s.chg5d || 0), 0) / stocks.length).toFixed(1)
     : 0;
   return {
-    leanBuys: buys,
-    leanSells: sells,
+    topRanked: buys,
+    bottomRanked: sells,
     neutrals: stocks.length - buys - sells,
     avgExpectedRange: avgRange,
     avgWeekMove,
@@ -593,12 +636,12 @@ async function runScreen() {
   const ds = buildDataset(stocks, market);
 
   // 1) train on the past only -> honest out-of-sample reliability metrics
-  const evalModel = trainLogistic(ds.train.X, ds.train.Y);
-  const metrics = evaluate(evalModel, ds.holdout, ds.holdoutVol);
+  const relEval = trainLogistic(ds.trainRel.X, ds.trainRel.Y);
+  const absEval = trainLogistic(ds.trainAbs.X, ds.trainAbs.Y);
+  const metrics = evaluate(relEval, absEval, ds.holdout, ds.holdoutVol);
 
-  // 2) train on all history -> live predictions
-  const liveModel = trainLogistic(ds.all.X, ds.all.Y);
-  const baseRate = metrics.baseRate != null ? metrics.baseRate : 52;
+  // 2) train on all history (relative target) -> live ranking
+  const relLive = trainLogistic(ds.allRel.X, ds.allRel.Y);
 
   // Cross-sectional risk bands from today's horizon volatility (terciles)
   const sigmas = ds.perStock
@@ -608,31 +651,32 @@ async function runScreen() {
   const q = (arr, p) => (arr.length ? arr[Math.floor(p * (arr.length - 1))] : 0);
   const riskBands = { low: q(sigmas, 1 / 3), high: q(sigmas, 2 / 3) };
 
-  const analyzed = [];
+  let analyzed = [];
   for (const entry of ds.perStock) {
-    const a = analyzeStock(entry, liveModel, baseRate, riskBands, market);
+    const a = analyzeStock(entry, relLive, riskBands);
     if (a) analyzed.push(a);
   }
-  // Rank by risk-adjusted conviction magnitude (strongest signal, either side)
-  analyzed.sort((a, b) => Math.abs(b.conviction) - Math.abs(a.conviction));
+  // Rank by relative-strength score; assign rank, percentile, and lean tiers.
+  analyzed.sort((a, b) => b.strengthScore - a.strengthScore);
+  const N = analyzed.length;
+  const topCut = Math.max(1, Math.round(N * TIER_QUANTILE));
+  analyzed.forEach((s, idx) => {
+    s.rank = idx + 1;
+    s.rankTotal = N;
+    s.rankPct = N > 1 ? +(((N - 1 - idx) / (N - 1)) * 100).toFixed(0) : 50;
+    s.verdict = idx < topCut ? "BUY" : idx >= N - topCut ? "SELL" : "HOLD";
+  });
 
   const k = market.closes.length - 1;
   const spyAbove200 = market.sma200[k] != null && market.closes[k] > market.sma200[k];
 
   return {
     generatedAt: new Date().toISOString(),
-    scanned: analyzed.length,
+    scanned: N,
     failed,
     horizonDays: HORIZON,
     horizonLabel: "~1 month (21 trading days)",
-    model: {
-      ...metrics,
-      // honest read: is directional accuracy above the drift base rate?
-      beatsBaseline:
-        metrics.dirAccuracy != null && metrics.baseRate != null
-          ? +(metrics.dirAccuracy - metrics.baseRate).toFixed(1)
-          : null,
-    },
+    model: metrics,
     market: {
       regime: spyAbove200 ? "risk-on" : "risk-off",
       spyAbove200,

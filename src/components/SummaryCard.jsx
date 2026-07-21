@@ -9,9 +9,9 @@ import { deltaColor } from "../theme.js";
 
 function Tile({ value, label, color }) {
   return (
-    <Paper variant="outlined" sx={{ p: 1.2, textAlign: "center" }}>
-      <Typography sx={{ fontSize: "1.3rem", fontWeight: 700, color }}>{value}</Typography>
-      <Typography sx={{ fontSize: "0.65rem", color: "text.secondary" }}>{label}</Typography>
+    <Paper variant="outlined" sx={{ p: 1.1, textAlign: "center" }}>
+      <Typography sx={{ fontSize: "1.25rem", fontWeight: 700, color }}>{value}</Typography>
+      <Typography sx={{ fontSize: "0.62rem", color: "text.secondary" }}>{label}</Typography>
     </Paper>
   );
 }
@@ -19,19 +19,16 @@ function Tile({ value, label, color }) {
 export default function SummaryCard({ summary, scanned, market }) {
   const theme = useTheme();
   return (
-    <Card sx={{ mt: 2 }}>
+    <Card>
       <CardContent>
         <Typography variant="h2" gutterBottom>
           This week at a glance
         </Typography>
         {market && (
-          <Typography sx={{ fontSize: "0.8rem", mb: 1 }}>
-            S&amp;P 500 regime:{" "}
-            <Box
-              component="b"
-              sx={{ color: market.spyAbove200 ? deltaColor(theme, 1) : theme.palette.error.main }}
-            >
-              {market.spyAbove200 ? "risk-on (above 200-day average)" : "risk-off (below 200-day average)"}
+          <Typography sx={{ fontSize: "0.78rem", mb: 1 }}>
+            S&amp;P 500:{" "}
+            <Box component="b" sx={{ color: market.spyAbove200 ? deltaColor(theme, 1) : theme.palette.error.main }}>
+              {market.spyAbove200 ? "risk-on" : "risk-off"}
             </Box>
             {market.spyChg20d != null && (
               <Box component="span" sx={{ color: "text.secondary" }}>
@@ -40,29 +37,23 @@ export default function SummaryCard({ summary, scanned, market }) {
             )}
           </Typography>
         )}
-        <Box
-          sx={{
-            display: "grid",
-            gridTemplateColumns: { xs: "repeat(2, 1fr)", sm: "repeat(4, 1fr)" },
-            gap: 1,
-            my: 1,
-          }}
-        >
-          <Tile value={summary.leanBuys} label="buy leans" color={deltaColor(theme, 1)} />
-          <Tile value={summary.leanSells} label="sell leans" color="error.main" />
-          <Tile value={summary.neutrals} label="neutral" />
-          <Tile
-            value={summary.avgExpectedRange != null ? "±" + summary.avgExpectedRange + "%" : "–"}
-            label="avg 1-mo range"
-          />
+        <Box sx={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 0.8, my: 1 }}>
+          <Tile value={summary.topRanked} label="top ranked" color={deltaColor(theme, 1)} />
+          <Tile value={summary.bottomRanked} label="bottom ranked" color="error.main" />
+          <Tile value={summary.neutrals} label="mid-pack" />
+          <Tile value={summary.avgExpectedRange != null ? "±" + summary.avgExpectedRange + "%" : "–"} label="avg 1-mo range" />
         </Box>
-        <Typography sx={{ fontSize: "0.75rem", color: "text.secondary" }}>
-          Average move this week across {scanned} stocks:{" "}
+        <Typography sx={{ fontSize: "0.72rem", color: "text.secondary" }}>
+          {scanned} stocks ranked by relative strength. Avg move this week:{" "}
           <Box component="b" sx={{ color: deltaColor(theme, summary.avgWeekMove) }}>
             {fmtPct(summary.avgWeekMove)}
           </Box>
-          . Cards are ranked by risk-adjusted conviction; "leans" are directional
-          hints only — size positions by the risk tier, not the arrow.
+          {summary.top && (
+            <>
+              {" "}· Strongest: <b>{summary.top.symbol}</b>
+            </>
+          )}
+          .
         </Typography>
       </CardContent>
     </Card>
