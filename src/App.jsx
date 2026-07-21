@@ -16,7 +16,6 @@ import RefreshIcon from "@mui/icons-material/Refresh";
 import DarkModeIcon from "@mui/icons-material/DarkMode";
 import LightModeIcon from "@mui/icons-material/LightMode";
 import ShowChartIcon from "@mui/icons-material/ShowChart";
-import CircleIcon from "@mui/icons-material/Circle";
 import ArrowUpwardIcon from "@mui/icons-material/ArrowUpward";
 import ArrowDownwardIcon from "@mui/icons-material/ArrowDownward";
 import SummaryCard from "./components/SummaryCard.jsx";
@@ -173,17 +172,24 @@ export default function App() {
           <Stack direction="row" spacing={1} alignItems="center">
             <Chip
               size="small"
-              icon={
-                <CircleIcon
-                  sx={{
-                    fontSize: 9,
-                    color: "#0ca30c !important",
-                    animation: "pulse 2s ease-in-out infinite",
-                    "@keyframes pulse": { "0%, 100%": { opacity: 1 }, "50%": { opacity: 0.35 } },
-                  }}
-                />
+              label={
+                <Box sx={{ display: "flex", alignItems: "center", gap: 0.6 }}>
+                  <Box
+                    sx={{
+                      width: 7,
+                      height: 7,
+                      borderRadius: "50%",
+                      flexShrink: 0,
+                      bgcolor: "#0ca30c",
+                      animation: "pulse 2s ease-in-out infinite",
+                      "@keyframes pulse": { "0%, 100%": { opacity: 1 }, "50%": { opacity: 0.3 } },
+                    }}
+                  />
+                  <Box component="span" sx={{ fontVariantNumeric: "tabular-nums" }}>
+                    {refreshing ? "Updating…" : `Live · ${countdown}`}
+                  </Box>
+                </Box>
               }
-              label={refreshing ? "Updating…" : `Live · ${countdown}`}
               variant="outlined"
               sx={{ fontSize: "0.7rem", display: { xs: "none", sm: "inline-flex" } }}
             />
