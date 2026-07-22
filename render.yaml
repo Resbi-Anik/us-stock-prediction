@@ -1,0 +1,10 @@
+# Render Blueprint — creates this app at https://weekly-prediction.onrender.com
+# One-time setup: Render dashboard -> New -> Blueprint -> select this repo -> Apply.
+services:
+  - type: web
+    name: weekly-prediction
+    runtime: node
+    plan: free
+    buildCommand: npm ci && npm run build
+    startCommand: node server.js
+    autoDeploy: true
