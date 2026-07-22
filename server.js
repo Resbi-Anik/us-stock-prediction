@@ -853,20 +853,6 @@ const STATIC_DIR = path.join(__dirname, "dist");
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://${req.headers.host}`);
 
-  // TEMPORARY: stage-by-stage Yahoo handshake probe for debugging the
-  // deployed host's IP reputation. Remove once analyst coverage works.
-  if (url.pathname === "/api/fresh-debug") {
-    try {
-      const report = await sources.diagnose();
-      res.writeHead(200, { "Content-Type": "application/json" });
-      res.end(JSON.stringify(report, null, 2));
-    } catch (e) {
-      res.writeHead(500, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ error: e.message }));
-    }
-    return;
-  }
-
   if (url.pathname === "/api/screen") {
     try {
       const payload = await getScreen();

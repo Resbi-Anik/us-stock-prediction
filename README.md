@@ -153,6 +153,13 @@ reliability card, and is scored forward by the live track record (which
 snapshots the blended ranking). It refreshes every ~30 minutes and degrades
 gracefully: if the endpoints fail, the app ranks on the validated model alone.
 
+**Datacenter-IP fallback.** Some hosts (e.g. Render/AWS) get 429 from Yahoo's
+crumb endpoint itself, which blocks the full consensus data. On such hosts the
+layer falls back per-symbol to Yahoo's crumb-free *insights* endpoint, which
+carries a single research provider's rating + price target (typically Argus) —
+coarser (no analyst count, revisions, or earnings date), and the UI labels it
+by provider (e.g. "Argus Buy") instead of implying a consensus.
+
 ## Architecture
 
 - `server.js` — zero-dependency Node server: fetches Yahoo Finance data (no API
