@@ -62,7 +62,7 @@ export default function StockTable({ stocks, showShariah = true }) {
                   return (
                     <>
                       <TableCell align="right" sx={{ ...num, color: toneColor(theme, a?.tone ?? 0) }}>
-                        {a ? `${a.label} (${s.analyst.count})` : "–"}
+                        {a ? `${a.label} (${s.analyst.provider || s.analyst.count})` : "–"}
                       </TableCell>
                       <TableCell align="right" sx={{ ...num, color: deltaColor(theme, s.analyst?.targetUpsidePct) }}>
                         {s.analyst?.targetUpsidePct != null ? fmtPct(s.analyst.targetUpsidePct) : "–"}

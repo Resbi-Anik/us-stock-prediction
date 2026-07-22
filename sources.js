@@ -170,6 +170,67 @@ async function fetchAnalyst(symbol) {
   return { analyst, earningsDate };
 }
 
+// ---------- crumb-free fallback: Yahoo insights (single research provider) ----------
+//
+// Some datacenter IPs (e.g. Render/AWS) get 429 on the crumb endpoint itself,
+// killing quoteSummary. The insights endpoint needs no crumb and carries one
+// research provider's rating + price target (typically Argus). Coarser than
+// consensus — no analyst count, no revisions, no earnings date — but combined
+// with news sentiment it keeps the live tilt alive on such hosts.
+
+const RATING_MAP = {
+  strong_buy: 1,
+  buy: 2,
+  overweight: 2,
+  outperform: 2,
+  hold: 3,
+  neutral: 3,
+  underperform: 4,
+  underweight: 4,
+  sell: 5,
+  strong_sell: 5,
+};
+
+async function fetchInsights(symbol) {
+  const res = await httpGet(
+    `https://query1.finance.yahoo.com/ws/insights/v2/finance/insights?symbol=${encodeURIComponent(symbol)}`
+  );
+  if (res.status !== 200) return null;
+  let rec = null;
+  try {
+    rec = JSON.parse(res.body)?.finance?.result?.recommendation || null;
+  } catch {
+    return null;
+  }
+  const recMean = rec?.rating ? RATING_MAP[rec.rating.toLowerCase().replace(/\s+/g, "_")] : null;
+  if (recMean == null) return null;
+  return {
+    analyst: {
+      recMean,
+      recKey: rec.rating.toLowerCase().replace(/\s+/g, "_"),
+      count: 1,
+      provider: (rec.provider || "research").split(" ")[0], // "Argus Research" -> "Argus"
+      targetMeanPrice: rec.targetPrice != null ? +(+rec.targetPrice).toFixed(2) : null,
+      targetUpsidePct: null, // server computes this against the stock's own close
+      revisionDelta: null,
+    },
+    earningsDate: null,
+  };
+}
+
+/** Consensus via quoteSummary when the session works; insights fallback otherwise. */
+async function fetchAnalystInfo(symbol, haveSession) {
+  if (haveSession) {
+    try {
+      const a = await fetchAnalyst(symbol);
+      if (a && (a.analyst || a.earningsDate)) return a;
+    } catch {
+      /* fall through to insights */
+    }
+  }
+  return fetchInsights(symbol);
+}
+
 // ---------- news headlines -> lexicon sentiment ----------
 
 const POS_RE = [
@@ -263,9 +324,7 @@ async function buildFreshInfo(symbols) {
   const haveSession = await getSession().then(() => true).catch(() => false);
 
   const [analystArr, newsArr] = await Promise.all([
-    haveSession
-      ? mapWithConcurrency(symbols, 6, fetchAnalyst)
-      : Promise.resolve(symbols.map(() => null)),
+    mapWithConcurrency(symbols, 6, (sym) => fetchAnalystInfo(sym, haveSession)),
     mapWithConcurrency(symbols, 6, fetchNews),
   ]);
 

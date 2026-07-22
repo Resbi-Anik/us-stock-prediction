@@ -644,6 +644,10 @@ function attachFreshInfo(analyzed, fresh) {
     s.news = f?.news || null;
     s.earningsDate = f?.earningsDate || null;
     s.earningsInDays = f?.earningsInDays ?? null;
+    // insights fallback ships only a raw target price; compute upside here
+    if (s.analyst && s.analyst.targetUpsidePct == null && s.analyst.targetMeanPrice != null && s.price > 0) {
+      s.analyst.targetUpsidePct = +(((s.analyst.targetMeanPrice - s.price) / s.price) * 100).toFixed(1);
+    }
   }
   const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
   const comps = [

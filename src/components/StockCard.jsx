@@ -27,11 +27,11 @@ function FreshInfo({ stock }) {
     <Box sx={{ display: "flex", gap: 1.4, mt: 0.9, flexWrap: "wrap" }}>
       {a && (
         <Typography sx={cell}>
-          Analysts{" "}
+          {stock.analyst.provider || "Analysts"}{" "}
           <Box component="b" sx={{ color: toneColor(theme, a.tone) }}>
             {a.label}
-          </Box>{" "}
-          ({stock.analyst.count})
+          </Box>
+          {!stock.analyst.provider && <> ({stock.analyst.count})</>}
         </Typography>
       )}
       {stock.analyst?.targetUpsidePct != null && (
