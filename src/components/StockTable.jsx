@@ -21,7 +21,8 @@ export default function StockTable({ stocks, showShariah = true }) {
   const theme = useTheme();
   return (
     <TableContainer component={Paper} variant="outlined">
-      <Table size="small" stickyHeader>
+      {/* denser cells: MUI's default 16px side padding wastes width across 14 columns */}
+      <Table size="small" stickyHeader sx={{ "& .MuiTableCell-root": { px: 0.8 } }}>
         <TableHead>
           <TableRow>
             <TableCell>#</TableCell>
