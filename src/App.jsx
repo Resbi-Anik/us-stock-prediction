@@ -277,8 +277,10 @@ export default function App() {
         >
           Educational tool, <b>not financial advice</b>. This ranks stocks by{" "}
           <b>relative strength</b> — a signal that held up out-of-sample —
-          rather than claiming to call absolute up/down (which barely beats a
-          coin flip). Size positions by the risk tier.
+          plus a modest <b>live tilt</b> from current analyst
+          consensus/targets/revisions and news tone (fresh info, not
+          backtest-validated). It never claims to call absolute up/down (which
+          barely beats a coin flip). Size positions by the risk tier.
         </Alert>
 
         {loading && (
@@ -351,7 +353,7 @@ export default function App() {
                   }}
                 />
               </Paper>
-              <ModelReliabilityCard model={data.model} />
+              <ModelReliabilityCard model={data.model} fresh={data.freshInfo} />
               <TrackRecordCard track={data.trackRecord} />
               <SummaryCard
                 summary={summary}
@@ -435,8 +437,9 @@ export default function App() {
             py: 3,
           }}
         >
-          Data: Yahoo Finance · Model retrained &amp; validated every refresh ·
-          Auto-updates every 5 minutes ·
+          Data: Yahoo Finance (prices, analyst consensus &amp; news) · Model
+          retrained &amp; validated every refresh · Live analyst/news tilt
+          refreshed every 30 minutes · Auto-updates every 5 minutes ·
         </Typography>
       </Box>
     </ThemeProvider>

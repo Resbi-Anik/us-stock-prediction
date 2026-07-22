@@ -1,13 +1,15 @@
 const TIER_QUANTILE = 0.2;
 
 /**
- * Re-rank a (possibly filtered) set of stocks by relative-strength score and
- * assign rank / percentile / tier locally, so the Shariah filter re-ranks
- * within its own universe instead of showing global ranks. Returns new objects
- * (does not mutate the server payload).
+ * Re-rank a (possibly filtered) set of stocks by the composite score (model
+ * relative strength blended with the live analyst/news tilt) and assign
+ * rank / percentile / tier locally, so the Shariah filter re-ranks within its
+ * own universe instead of showing global ranks. Returns new objects (does not
+ * mutate the server payload).
  */
 export function rankAndTier(stocks) {
-  const sorted = [...stocks].sort((a, b) => b.strengthScore - a.strengthScore);
+  const score = (s) => s.compositeScore ?? s.strengthScore;
+  const sorted = [...stocks].sort((a, b) => score(b) - score(a));
   const N = sorted.length;
   const cut = Math.max(1, Math.round(N * TIER_QUANTILE));
   return sorted.map((s, i) => ({

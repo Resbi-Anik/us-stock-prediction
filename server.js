@@ -34,6 +34,15 @@
  *     accuracy (for honesty), Brier, and volatility R^2.
  *   - Volatility: expected +/- range (one sigma) + Low/Medium/High risk tier.
  *
+ * FRESH-INFO TILT (v5): the price model only sees history. A second, LIVE
+ * layer (sources.js) pulls current analyst consensus / price-target upside /
+ * rating revisions and a news-headline sentiment read per stock, turns them
+ * into a cross-sectional percentile, and tilts the final ranking by a modest
+ * BLEND_EXTERNAL weight. This layer cannot be backtested from free endpoints,
+ * so it is (a) weighted conservatively, (b) labeled in the UI as live info
+ * rather than validated edge, and (c) scored forward by the live track record
+ * (which snapshots the blended ranking from the day it ships).
+ *
  * Data source: Yahoo Finance public chart API (no key required).
  * Results cached in memory for 5 minutes.
  */
@@ -44,6 +53,7 @@ const fs = require("fs");
 const path = require("path");
 const { WATCHLIST, SECTOR_BY_SYMBOL, SHARIAH_BY_SYMBOL } = require("./universe.js");
 const track = require("./track.js");
+const sources = require("./sources.js");
 
 const PORT = process.env.PORT || 3000;
 const CACHE_TTL_MS = 5 * 60 * 1000;
@@ -53,6 +63,7 @@ const HORIZON = 21; // trading days a call is judged against (~1 month)
 const HOLDOUT_BARS = 252; // final ~12 months held out to measure honest accuracy
 const WARMUP = 125; // bars before a stock has all features (needs 120d momentum)
 const TIER_QUANTILE = 0.2; // top/bottom fifth by strength score become leans
+const BLEND_EXTERNAL = 0.25; // weight of the live analyst/news tilt in the final rank
 const GD_ITERS = 350;
 const GD_LR = 0.1;
 const GD_L2 = 1e-3;
@@ -601,6 +612,89 @@ function analyzeStock(entry, relModel, riskBands) {
   };
 }
 
+// ---------- Fresh-info tilt (live analyst + news layer) ----------
+
+/** Tie-aware percentile rank (0-100) for [{sym, v}] pairs. */
+function pctileBySym(pairs) {
+  const sorted = [...pairs].sort((a, b) => a.v - b.v);
+  const out = new Map();
+  const n = sorted.length;
+  let i = 0;
+  while (i < n) {
+    let j = i;
+    while (j + 1 < n && sorted[j + 1].v === sorted[i].v) j++;
+    const pct = n > 1 ? (((i + j) / 2) / (n - 1)) * 100 : 50;
+    for (let k = i; k <= j; k++) out.set(sorted[k].sym, pct);
+    i = j + 1;
+  }
+  return out;
+}
+
+/**
+ * Attach live analyst/news facts to each stock and compute externalScore:
+ * a 0-100 cross-sectional percentile combining price-target upside, consensus
+ * strength, one-month rating revisions, and news-headline sentiment. Stocks
+ * with fewer than two available components get null (no tilt applied).
+ */
+function attachFreshInfo(analyzed, fresh) {
+  const info = (fresh && fresh.bySymbol) || {};
+  for (const s of analyzed) {
+    const f = info[s.symbol];
+    s.analyst = f?.analyst || null;
+    s.news = f?.news || null;
+    s.earningsDate = f?.earningsDate || null;
+    s.earningsInDays = f?.earningsInDays ?? null;
+  }
+  const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
+  const comps = [
+    {
+      w: 0.3, // mean price-target upside (winsorized: extreme targets are stale/noisy)
+      map: pctileBySym(
+        analyzed
+          .filter((s) => s.analyst?.targetUpsidePct != null)
+          .map((s) => ({ sym: s.symbol, v: clamp(s.analyst.targetUpsidePct, -50, 50) }))
+      ),
+    },
+    {
+      w: 0.25, // consensus strength (1 = strong buy … 5 = sell, so negate)
+      map: pctileBySym(
+        analyzed
+          .filter((s) => s.analyst?.recMean != null)
+          .map((s) => ({ sym: s.symbol, v: -s.analyst.recMean }))
+      ),
+    },
+    {
+      w: 0.25, // rating revisions: buy-share change vs one month ago
+      map: pctileBySym(
+        analyzed
+          .filter((s) => s.analyst?.revisionDelta != null)
+          .map((s) => ({ sym: s.symbol, v: s.analyst.revisionDelta }))
+      ),
+    },
+    {
+      w: 0.2, // news sentiment over the last week
+      map: pctileBySym(
+        analyzed
+          .filter((s) => s.news?.sentiment != null)
+          .map((s) => ({ sym: s.symbol, v: s.news.sentiment }))
+      ),
+    },
+  ];
+  for (const s of analyzed) {
+    let acc = 0;
+    let wsum = 0;
+    let have = 0;
+    for (const c of comps) {
+      const v = c.map.get(s.symbol);
+      if (v == null) continue;
+      acc += c.w * v;
+      wsum += c.w;
+      have++;
+    }
+    s.externalScore = have >= 2 ? Math.round(acc / wsum) : null;
+  }
+}
+
 // ---------- Screen ----------
 
 function buildSummary(stocks) {
@@ -623,7 +717,12 @@ function buildSummary(stocks) {
 
 async function runScreen() {
   const symbols = ["SPY", ...WATCHLIST];
-  const raw = await mapWithConcurrency(symbols, 6, fetchHistory);
+  // Price history and the live analyst/news layer fetch concurrently; the
+  // fresh layer never throws (degrades to an empty map on failure).
+  const [raw, freshInfo] = await Promise.all([
+    mapWithConcurrency(symbols, 6, fetchHistory),
+    sources.getFreshInfo(WATCHLIST),
+  ]);
   const bySym = {};
   const failed = [];
   for (const r of raw) {
@@ -658,9 +757,23 @@ async function runScreen() {
     const a = analyzeStock(entry, relLive, riskBands);
     if (a) analyzed.push(a);
   }
-  // Rank by relative-strength score; assign rank, percentile, and lean tiers.
+  // Live tilt: attach analyst/news facts and the external percentile.
+  attachFreshInfo(analyzed, freshInfo);
+
+  // Model percentile (from the validated relative-strength score) blended
+  // with the live external percentile -> composite that drives the ranking.
   analyzed.sort((a, b) => b.strengthScore - a.strengthScore);
   const N = analyzed.length;
+  analyzed.forEach((s, idx) => {
+    s.modelPct = N > 1 ? Math.round(((N - 1 - idx) / (N - 1)) * 100) : 50;
+    s.compositeScore =
+      s.externalScore == null
+        ? s.modelPct
+        : +((1 - BLEND_EXTERNAL) * s.modelPct + BLEND_EXTERNAL * s.externalScore).toFixed(1);
+  });
+
+  // Rank by the composite; assign rank, percentile, and lean tiers.
+  analyzed.sort((a, b) => b.compositeScore - a.compositeScore);
   const topCut = Math.max(1, Math.round(N * TIER_QUANTILE));
   analyzed.forEach((s, idx) => {
     s.rank = idx + 1;
@@ -687,6 +800,12 @@ async function runScreen() {
     horizonDays: HORIZON,
     horizonLabel: "~1 month (21 trading days)",
     model: metrics,
+    freshInfo: {
+      fetchedAt: freshInfo.fetchedAt,
+      analystCoverage: freshInfo.analystCoverage,
+      newsCoverage: freshInfo.newsCoverage,
+      blendWeight: BLEND_EXTERNAL,
+    },
     market: {
       regime: spyAbove200 ? "risk-on" : "risk-off",
       spyAbove200,

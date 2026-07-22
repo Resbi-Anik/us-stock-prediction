@@ -4,11 +4,14 @@ A React + Material UI web app (responsive — a full-page two-column dashboard o
 desktop, a single stacked column on mobile, installable as a home-screen PWA)
 that scans **~120 liquid US large-caps across all 11 GICS sectors** and
 **ranks them by sector-neutral relative strength** with a pooled,
-walk-forward-validated model. Each stock shows its **rank / strength
-percentile**, a **reliable expected-range and risk tier**, sector, and the
-model factors behind it. A **live track record** records the app's own picks
-forward and scores them ~1 month later. The app **auto-updates every 5
-minutes** and has a light/dark theme toggle.
+walk-forward-validated model, **tilted by a live fresh-info layer** (current
+analyst consensus, price-target upside, one-month rating revisions, and
+news-headline sentiment). Each stock shows its **rank / strength percentile**,
+a **reliable expected-range and risk tier**, sector, live analyst/news
+readings, an earnings-soon flag, and the model factors behind it. A **live
+track record** records the app's own picks forward and scores them ~1 month
+later. The app **auto-updates every 5 minutes** and has a light/dark theme
+toggle.
 
 > ⚠️ **Not financial advice, and deliberately honest about its limits.**
 > Predicting a single stock's *absolute* up/down one month out barely beats
@@ -80,8 +83,10 @@ Then open **http://localhost:3000**.
 - **This week at a glance** — S&P 500 regime, counts of top/bottom/mid-pack, and
   average expected 1-month range.
 - **Top ranked / Bottom ranked cards** — rank badge, price, sparkline, RSI, a
-  **relative-strength percentile** bar, the **expected ±range** and **risk
-  tier**, an honest one-line read, and the top model factors.
+  **strength + live tilt percentile** bar, the **expected ±range** and **risk
+  tier**, the **live analyst consensus / target upside / news tone** (hover the
+  news reading for the actual headlines), an **earnings-soon chip**, an honest
+  one-line read, and the top model factors.
 - **Full ranked table** of all stocks: strength percentile, expected range,
   risk tier, and lean, strongest to weakest.
 
@@ -121,6 +126,33 @@ displayed 21-day horizon).
 **feature contributions** (weight × value) for that stock today — a faithful
 readout of what actually drove its score.
 
+## The fresh-info tilt (live analyst + news layer)
+
+The price model only sees history, so `sources.js` adds a **live layer** from
+free, keyless Yahoo endpoints (quoteSummary via the cookie+crumb handshake, and
+the per-symbol news RSS feed):
+
+- **Analyst consensus** — recommendation mean (1 = Strong Buy … 5 = Sell) and
+  the number of covering analysts (ignored below 3 analysts).
+- **Price-target upside** — mean analyst target vs the current price,
+  winsorized at ±50% so stale/extreme targets can't dominate.
+- **Rating revisions** — the change in the buy-share of ratings vs one month
+  ago (revisions carry cross-sectional signal in the literature).
+- **News sentiment** — headlines from the last 7 days scored with a small
+  finance-tuned lexicon (beats/upgrades/records vs misses/downgrades/probes),
+  dampened when few headlines carry signal.
+- **Earnings proximity** — shown as an event-risk chip ("Earnings 7d"), never
+  as a direction.
+
+The four signals become cross-sectional percentiles and combine into an
+**external score** (weights 30/25/25/20); the final ranking blends
+`75% model percentile + 25% external percentile`. **Honesty note:** this layer
+has no free historical feed, so it *cannot* be backtest-validated like the
+model — which is why it gets a modest weight, is labeled "live" in the
+reliability card, and is scored forward by the live track record (which
+snapshots the blended ranking). It refreshes every ~30 minutes and degrades
+gracefully: if the endpoints fail, the app ranks on the validated model alone.
+
 ## Architecture
 
 - `server.js` — zero-dependency Node server: fetches Yahoo Finance data (no API
@@ -129,6 +161,9 @@ readout of what actually drove its score.
   `/api/screen` and the built React app from `dist/`. Results cached 5 min.
 - `universe.js` — the ~120-name universe with sector and approximate Shariah
   tags.
+- `sources.js` — the live fresh-info layer: analyst consensus / targets /
+  revisions / earnings dates (Yahoo quoteSummary, cookie+crumb) and news-RSS
+  sentiment. Cached ~30 min, zero dependencies, never throws.
 - `track.js` — the forward-only live track record (persists to `data/`).
 - `src/` — React app (Vite + Material UI): `App.jsx`, `components/`
   (ModelReliabilityCard, TrackRecordCard, SummaryCard, StockCard, Sparkline,
@@ -146,3 +181,6 @@ readout of what actually drove its score.
 - **Port:** `PORT=8080 node server.js`.
 - **Horizon & tier size:** `HORIZON` (default 21 trading days) and
   `TIER_QUANTILE` (default 0.2 → top/bottom fifth become leans) in `server.js`.
+- **Fresh-info tilt:** `BLEND_EXTERNAL` in `server.js` (default 0.25; set 0 to
+  rank on the validated model alone) and the component weights / news window in
+  `sources.js`.

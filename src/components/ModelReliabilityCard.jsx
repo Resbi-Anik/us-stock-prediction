@@ -45,10 +45,11 @@ function QuintileBars({ qMeans }) {
   );
 }
 
-export default function ModelReliabilityCard({ model }) {
+export default function ModelReliabilityCard({ model, fresh }) {
   const theme = useTheme();
   if (!model) return null;
   const good = deltaColor(theme, 1);
+  const hasFresh = fresh && (fresh.analystCoverage > 0 || fresh.newsCoverage > 0);
 
   return (
     <Card>
@@ -88,6 +89,14 @@ export default function ModelReliabilityCard({ model }) {
             color={theme.palette.error.main}
             help="Predicting whether one stock rises in isolation barely beats the market's drift — which is why the app ranks stocks against each other instead."
           />
+          {hasFresh && (
+            <Metric
+              label="Live analyst + news tilt"
+              value={`${Math.round((fresh.blendWeight ?? 0) * 100)}% of rank · live`}
+              color={theme.palette.primary.main}
+              help={`Current analyst consensus, price targets & rating revisions (${fresh.analystCoverage} stocks) plus news-headline tone (${fresh.newsCoverage}) tilt the validated ranking. This layer has no free backtest history, so it is weighted modestly and scored forward by the live track record.`}
+            />
+          )}
         </Box>
 
         <Tooltip title="Brier score: 0 is perfect, 0.25 is a coin flip.">

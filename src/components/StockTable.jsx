@@ -8,10 +8,14 @@ import Paper from "@mui/material/Paper";
 import Chip from "@mui/material/Chip";
 import Box from "@mui/material/Box";
 import { useTheme } from "@mui/material/styles";
-import { fmtPct, fmtPrice, verdictMeta, riskMeta } from "../format.js";
+import { fmtPct, fmtPrice, verdictMeta, riskMeta, analystMeta, newsMeta } from "../format.js";
 import { deltaColor } from "../theme.js";
 
 const num = { fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" };
+
+function toneColor(theme, tone) {
+  return tone > 0 ? deltaColor(theme, 1) : tone < 0 ? theme.palette.error.main : undefined;
+}
 
 export default function StockTable({ stocks, showShariah = true }) {
   const theme = useTheme();
@@ -27,6 +31,9 @@ export default function StockTable({ stocks, showShariah = true }) {
             <TableCell align="right">1 mo</TableCell>
             <TableCell align="right">RSI</TableCell>
             <TableCell align="right">Strength</TableCell>
+            <TableCell align="right" title="Analyst consensus (number of analysts)">Analysts</TableCell>
+            <TableCell align="right" title="Upside to the mean analyst price target">Target</TableCell>
+            <TableCell align="right" title="News-headline tone over the last week">News</TableCell>
             <TableCell align="right">Range</TableCell>
             <TableCell align="center">Risk</TableCell>
             {showShariah && <TableCell align="center" title="Approximate Shariah screening">☪</TableCell>}
@@ -48,6 +55,23 @@ export default function StockTable({ stocks, showShariah = true }) {
                 <TableCell align="right" sx={{ ...num, color: deltaColor(theme, s.chg20d) }}>{fmtPct(s.chg20d)}</TableCell>
                 <TableCell align="right" sx={num}>{s.rsi ?? "–"}</TableCell>
                 <TableCell align="right" sx={{ ...num, color: scoreColor, fontWeight: 600 }}>{s.rankPct}</TableCell>
+                {(() => {
+                  const a = analystMeta(s.analyst);
+                  const n = newsMeta(s.news);
+                  return (
+                    <>
+                      <TableCell align="right" sx={{ ...num, color: toneColor(theme, a?.tone ?? 0) }}>
+                        {a ? `${a.label} (${s.analyst.count})` : "–"}
+                      </TableCell>
+                      <TableCell align="right" sx={{ ...num, color: deltaColor(theme, s.analyst?.targetUpsidePct) }}>
+                        {s.analyst?.targetUpsidePct != null ? fmtPct(s.analyst.targetUpsidePct) : "–"}
+                      </TableCell>
+                      <TableCell align="right" sx={{ ...num, color: toneColor(theme, n?.tone ?? 0) }}>
+                        {n ? n.label : "–"}
+                      </TableCell>
+                    </>
+                  );
+                })()}
                 <TableCell align="right" sx={num}>±{s.expectedRangePct}%</TableCell>
                 <TableCell align="center">
                   <Chip size="small" label={s.riskTier} color={risk.color} variant="outlined" sx={{ fontSize: "0.6rem", height: 20 }} />

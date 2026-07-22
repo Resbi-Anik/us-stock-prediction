@@ -6,10 +6,70 @@ import Box from "@mui/material/Box";
 import Stack from "@mui/material/Stack";
 import Divider from "@mui/material/Divider";
 import LinearProgress from "@mui/material/LinearProgress";
+import Tooltip from "@mui/material/Tooltip";
 import { useTheme } from "@mui/material/styles";
 import Sparkline from "./Sparkline.jsx";
-import { fmtPct, fmtPrice, verdictMeta, riskMeta, summarize } from "../format.js";
+import { fmtPct, fmtPrice, verdictMeta, riskMeta, summarize, analystMeta, newsMeta } from "../format.js";
 import { deltaColor } from "../theme.js";
+
+function toneColor(theme, tone) {
+  return tone > 0 ? deltaColor(theme, 1) : tone < 0 ? theme.palette.error.main : theme.palette.text.primary;
+}
+
+/** Live analyst-consensus / target-upside / news-tone row (only when data exists). */
+function FreshInfo({ stock }) {
+  const theme = useTheme();
+  const a = analystMeta(stock.analyst);
+  const n = newsMeta(stock.news);
+  if (!a && !n) return null;
+  const cell = { fontSize: "0.7rem", color: "text.secondary", whiteSpace: "nowrap" };
+  return (
+    <Box sx={{ display: "flex", gap: 1.4, mt: 0.9, flexWrap: "wrap" }}>
+      {a && (
+        <Typography sx={cell}>
+          Analysts{" "}
+          <Box component="b" sx={{ color: toneColor(theme, a.tone) }}>
+            {a.label}
+          </Box>{" "}
+          ({stock.analyst.count})
+        </Typography>
+      )}
+      {stock.analyst?.targetUpsidePct != null && (
+        <Typography sx={cell}>
+          Target{" "}
+          <Box component="b" sx={{ color: deltaColor(theme, stock.analyst.targetUpsidePct), fontVariantNumeric: "tabular-nums" }}>
+            {fmtPct(stock.analyst.targetUpsidePct)}
+          </Box>
+        </Typography>
+      )}
+      {n && (
+        <Tooltip
+          title={
+            stock.news.headlines?.length ? (
+              <Box>
+                {stock.news.headlines.map((h, i) => (
+                  <Typography key={i} sx={{ fontSize: "0.7rem", mb: 0.5 }}>
+                    • {h.title}
+                  </Typography>
+                ))}
+              </Box>
+            ) : (
+              ""
+            )
+          }
+        >
+          <Typography sx={{ ...cell, cursor: "help", textDecoration: "underline dotted", textUnderlineOffset: 3 }}>
+            News{" "}
+            <Box component="b" sx={{ color: toneColor(theme, n.tone) }}>
+              {n.label}
+            </Box>{" "}
+            ({stock.news.pos}↑ {stock.news.neg}↓)
+          </Typography>
+        </Tooltip>
+      )}
+    </Box>
+  );
+}
 
 function Stat({ label, value, color }) {
   return (
@@ -93,6 +153,16 @@ export default function StockCard({ stock, model }) {
           {stock.sector && (
             <Chip size="small" label={stock.sector} variant="outlined" sx={{ fontSize: "0.62rem", height: 22, color: "text.secondary" }} />
           )}
+          {stock.earningsInDays != null && stock.earningsInDays <= 14 && (
+            <Chip
+              size="small"
+              label={stock.earningsInDays === 0 ? "Earnings today" : `Earnings ${stock.earningsInDays}d`}
+              color="warning"
+              variant="outlined"
+              sx={{ fontSize: "0.62rem", height: 22 }}
+              title={`Next earnings ${stock.earningsDate} — expect extra volatility`}
+            />
+          )}
         </Stack>
 
         <Box sx={{ display: "flex", alignItems: "center", gap: 1.5, mt: 1.2 }}>
@@ -107,7 +177,9 @@ export default function StockCard({ stock, model }) {
         <Divider sx={{ my: 1.1 }} />
 
         <Box sx={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
-          <Typography sx={{ fontSize: "0.74rem", color: "text.secondary" }}>Relative strength</Typography>
+          <Typography sx={{ fontSize: "0.74rem", color: "text.secondary" }}>
+            {stock.externalScore != null ? "Strength + live tilt" : "Relative strength"}
+          </Typography>
           <Typography sx={{ fontSize: "0.78rem", fontWeight: 700, color: scoreColor }}>
             {stock.rankPct}
             <Box component="span" sx={{ fontWeight: 500, color: "text.secondary" }}>
@@ -121,6 +193,8 @@ export default function StockCard({ stock, model }) {
           sx={{ height: 6, borderRadius: 999, mt: 0.6, "& .MuiLinearProgress-bar": { bgcolor: scoreColor } }}
           aria-label="Relative-strength percentile"
         />
+
+        <FreshInfo stock={stock} />
 
         <Typography sx={{ fontSize: "0.71rem", color: "text.secondary", mt: 0.9 }}>
           {summarize(stock, model)}
